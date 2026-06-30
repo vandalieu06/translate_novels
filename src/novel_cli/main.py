@@ -1,10 +1,8 @@
-from turtle import save
+from time import sleep
 
-from novel_cli import scrapping
 from novel_cli.decorators import calc_time
 from novel_cli.origins import NovelFire as novelfire
 from novel_cli.scrapping import ScrappingNovel
-from novel_cli.translate import Translate
 
 
 @calc_time
@@ -27,7 +25,11 @@ def save_raw_chapters():
     url_novel = 'https://novelfire.net/book/inner-voice-all-heroines-hear-my-inner-voice/chapters'
     url_chapters = extract_urls_chpaters(url_novel)
 
-    for url in url_chapters[:10]:
+    for i, url in enumerate(url_chapters):
+        if (i + 1) % 50 == 0:
+            print(f'End Bacth {(i + 1) / 50}')
+            sleep(10)
+
         res = ScrappingNovel().extract_chapter(
             f'https://novelfire.net{url}',
             novelfire.chapter_title,
@@ -40,7 +42,6 @@ def save_raw_chapters():
         )
 
 
-@calc_time
 def main():
 
     save_raw_chapters()
