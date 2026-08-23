@@ -44,6 +44,7 @@ async def run_pipeline(
     force: bool,
     concurrency: int,
     download_all: bool = False,
+    translate_pending: bool = False,
     fetcher: Fetcher,
     adapter: SiteAdapter | None = None,
     translator: Translator | None = None,
@@ -54,6 +55,17 @@ async def run_pipeline(
     on_epub_progress: ProgressCallback | None = None,
 ) -> Manifest:
     """Ejecuta el pipeline completo y devuelve el manifest final."""
+    if translate_pending:
+        return await _run_translate_pending(
+            url=url,
+            output_dir=output_dir,
+            resume=resume,
+            force=force,
+            translator=translator,
+            on_status=on_status,
+            on_translate_progress=on_translate_progress,
+            on_epub_progress=on_epub_progress,
+        )
     if on_status:
         on_status("Resolviendo adaptador de sitio")
     adapter = adapter or get_adapter(url)
@@ -258,6 +270,89 @@ def _load_all_chapters(chapters: list[Chapter], chapter_dir: Path) -> list[Chapt
         if path.exists():
             loaded.append(load_chapter(path, chapter.num, chapter.url))
     return loaded
+
+
+def _load_all_from_disk(chapter_dir: Path) -> list[Chapter]:
+    """Carga todos los capitulos del disco (raw/ o translated/) ordenados por num."""
+    loaded: list[Chapter] = []
+    for path in sorted(chapter_dir.glob("*.md")):
+        try:
+            num = int(path.stem)
+        except ValueError:
+            continue
+        loaded.append(load_chapter(path, num, url=""))
+    return loaded
+
+
+def _find_manifest_by_url(output_dir: Path, url: str) -> tuple[Path, Manifest]:
+    """Busca el slug_dir cuyo manifest.source_url coincide con la URL."""
+    if not output_dir.exists():
+        raise PipelineError(
+            f"no existe el directorio de salida {output_dir}; ejecuta primero novel-cli <url>"
+        )
+    for slug_dir in sorted(output_dir.iterdir()):
+        if not slug_dir.is_dir():
+            continue
+        manifest = Manifest.load(slug_dir)
+        if manifest is not None and manifest.source_url == url:
+            return slug_dir, manifest
+    raise PipelineError(
+        f"no hay descarga previa para {url}; ejecuta primero novel-cli <url>"
+    )
+
+
+async def _run_translate_pending(
+    *,
+    url: str,
+    output_dir: Path,
+    resume: bool,
+    force: bool,
+    translator: Translator | None,
+    on_status: StatusCallback | None,
+    on_translate_progress: ProgressCallback | None,
+    on_epub_progress: ProgressCallback | None,
+) -> Manifest:
+    """Traduce solo los capitulos pendientes sin descargar ni tocar el TOC."""
+    if translator is None:
+        raise PipelineError("se pidio traducir pendientes sin un Translator")
+    slug_dir, manifest = _find_manifest_by_url(Path(output_dir), url)
+    raw_chapters = _load_all_from_disk(slug_dir / "raw")
+    if not raw_chapters:
+        raise PipelineError("no hay capitulos descargados en disco")
+
+    if on_status:
+        on_status("Traduciendo capitulos pendientes (sin descargar)")
+    await translate_chapters(
+        translator=translator,
+        chapters=raw_chapters,
+        slug_dir=slug_dir,
+        manifest=manifest,
+        force=force,
+        on_progress=on_translate_progress,
+    )
+    translated = _load_all_from_disk(slug_dir / "translated")
+    metadata = NovelMetadata(
+        title=manifest.title,
+        author=manifest.author,
+        cover_url=manifest.cover_path,
+        source_url=manifest.source_url,
+    )
+    es_names = _generate_epubs(
+        slug_dir=slug_dir,
+        manifest=manifest,
+        metadata=metadata,
+        chapters=translated,
+        volume_size=manifest.volume_size,
+        language="es",
+        translated=True,
+        resume=resume,
+        force=force,
+        on_progress=on_epub_progress,
+    )
+    manifest.epub_translated = es_names
+    manifest.translated = True
+    manifest.save(slug_dir)
+    return manifest
 
 
 def _epub_language(code: str) -> str:

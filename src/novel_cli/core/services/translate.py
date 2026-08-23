@@ -123,6 +123,94 @@ class GoogleFreeTranslator:
             await self._client.aclose()
 
 
+class LibreTranslateTranslator:
+    """Cliente de LibreTranslate local (POST /translate), sin rate-limit propio."""
+
+    def __init__(
+        self,
+        *,
+        base_url: str = config.TRANSLATE_URL,
+        api_key: str | None = None,
+        client: httpx.AsyncClient | None = None,
+        pacer: Pacer | None = None,
+        cooldown: CooldownGate | None = None,
+        max_retries: int = config.TRANSLATE_RETRY_RATE_LIMIT,
+        backoff_base: float = config.TRANSLATE_BACKOFF_BASE_SECONDS,
+    ):
+        self.base_url = base_url.rstrip("/")
+        self.api_key = api_key
+        self._owns_client = client is None
+        self._client = client or httpx.AsyncClient(
+            timeout=config.DEFAULT_HTTP_TIMEOUT_SECONDS
+        )
+        self.pacer = pacer or Pacer(200)
+        self.cooldown = cooldown or CooldownGate()
+        self.max_retries = max_retries
+        self.backoff_base = backoff_base
+
+    async def translate_text(
+        self, text: str, *, source: str = "auto", target: str = "es"
+    ) -> str:
+        if not text.strip():
+            return text
+        payload = {"q": text, "source": source, "target": target, "format": "text"}
+        headers = {"Content-Type": "application/json"}
+        if self.api_key:
+            headers["Authorization"] = f"Bearer {self.api_key}"
+
+        for attempt in range(self.max_retries + 1):
+            await self.cooldown.wait()
+            await self.pacer.acquire()
+            try:
+                response = await self._client.post(
+                    f"{self.base_url}/translate", json=payload, headers=headers
+                )
+            except httpx.HTTPError as exc:
+                if attempt < self.max_retries:
+                    await asyncio.sleep(self._backoff(attempt))
+                    continue
+                raise TranslateError(f"network error: {exc}") from exc
+
+            if response.status_code == 200:
+                return response.json()["translatedText"]
+
+            if response.status_code in (429, 503):
+                delay = self._rate_delay(response, attempt)
+                await self.cooldown.trigger(delay)
+                if attempt < self.max_retries:
+                    await asyncio.sleep(delay)
+                    continue
+                raise TranslateError(
+                    f"rate limited ({response.status_code}); espera y re-ejecuta",
+                    status_code=response.status_code,
+                )
+
+            if attempt < self.max_retries:
+                await asyncio.sleep(self._backoff(attempt))
+                continue
+            raise TranslateError(
+                f"HTTP {response.status_code}", status_code=response.status_code
+            )
+
+        raise TranslateError("unreachable")
+
+    def _backoff(self, attempt: int) -> float:
+        return min(
+            self.backoff_base * (2**attempt),
+            config.TRANSLATE_RETRY_AFTER_MAX_SECONDS,
+        )
+
+    def _rate_delay(self, response: httpx.Response, attempt: int) -> float:
+        retry_after = parse_retry_after(response.headers.get("retry-after"))
+        if retry_after is not None:
+            return min(retry_after, config.TRANSLATE_RETRY_AFTER_MAX_SECONDS)
+        return self._backoff(attempt)
+
+    async def aclose(self) -> None:
+        if self._owns_client:
+            await self._client.aclose()
+
+
 class OllamaTranslator:
     """Backend opcional con LLM local (fuera de alcance v1)."""
 
@@ -130,6 +218,16 @@ class OllamaTranslator:
         self, text: str, *, source: str = "auto", target: str = "es"
     ) -> str:
         raise NotImplementedError("OllamaTranslator no esta implementado en v1")
+
+
+def build_default_translator() -> Translator:
+    """Selecciona el backend por env NOVEL_TRANSLATE_BACKEND (google | libre)."""
+    if config.TRANSLATE_BACKEND == "libre":
+        return LibreTranslateTranslator(
+            base_url=config.TRANSLATE_URL,
+            api_key=config.TRANSLATE_API_KEY,
+        )
+    return GoogleFreeTranslator()
 
 
 async def translate_paragraphs(

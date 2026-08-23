@@ -1,0 +1,27 @@
+# LibreTranslate local (traducción en pruebas, sin rate-limit de Google).
+# Uso con podman (rootless) + docker-compose instalado:
+#   podman compose up -d          # primer arranque descarga los modelos (minutos)
+#   podman compose logs -f
+#   podman compose down           # el volumen de modelos persiste
+# Base del ejemplo oficial: https://github.com/LibreTranslate/LibreTranslate
+
+services:
+  libretranslate:
+    container_name: novel-cli-libretranslate
+    image: libretranslate/libretranslate:latest
+    ports:
+      - "127.0.0.1:5000:5000"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "./venv/bin/python scripts/healthcheck.py"]
+      interval: 10s
+      timeout: 4s
+      retries: 4
+      start_period: 5s
+    environment:
+      LT_LOAD_ONLY: "en,es,ja"   # modelos cargados (en/es/es→ja). Quita para todos los idiomas.
+    volumes:
+      - libretranslate_models:/home/libretranslate/.local
+
+volumes:
+  libretranslate_models:

@@ -8,6 +8,7 @@ import httpx
 import pytest
 import respx
 
+from novel_cli.core import config
 from novel_cli.core.config import DEFAULT_MAX_WORDS_PER_CHUNK
 from novel_cli.core.models.novel import Chapter
 from novel_cli.core.models.state import Manifest
@@ -15,12 +16,16 @@ from novel_cli.core.scraper.fetcher import CooldownGate, Pacer
 from novel_cli.core.services.translate import (
     GTX_ENDPOINT,
     GoogleFreeTranslator,
+    LibreTranslateTranslator,
     TranslateError,
+    build_default_translator,
     translate_chapter,
     translate_chapters,
     translate_paragraphs,
 )
 from novel_cli.core.utils.names import chapter_filename
+
+LIBRE_ENDPOINT = "http://localhost:5000/translate"
 
 
 def echo_handler(request: httpx.Request) -> httpx.Response:
@@ -33,6 +38,13 @@ def make_translator(**kw) -> GoogleFreeTranslator:
     kw.setdefault("max_retries", 3)
     kw.setdefault("backoff_base", 0.0)
     return GoogleFreeTranslator(**kw)
+
+
+def make_libre(**kw) -> LibreTranslateTranslator:
+    kw.setdefault("pacer", Pacer(0))
+    kw.setdefault("max_retries", 3)
+    kw.setdefault("backoff_base", 0.0)
+    return LibreTranslateTranslator(**kw)
 
 
 def make_manifest(slug_dir) -> Manifest:
@@ -307,3 +319,95 @@ async def test_force_retranslates_all(tmp_path):
     assert len(received) == 1
     content = (translated_dir / chapter_filename(1)).read_text(encoding="utf-8")
     assert content.startswith("# Ch 1")
+
+
+@pytest.mark.asyncio
+async def test_libre_sends_payload_and_parses():
+    captured: dict = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured["json"] = request.content
+        captured["headers"] = request.headers
+        return httpx.Response(200, json={"translatedText": "Hola mundo"})
+
+    with respx.mock() as router:
+        router.post(LIBRE_ENDPOINT).mock(side_effect=handler)
+        translator = make_libre()
+        try:
+            result = await translator.translate_text("Hello world", target="es")
+            assert result == "Hola mundo"
+        finally:
+            await translator.aclose()
+    import json
+
+    body = json.loads(captured["json"])
+    assert body == {
+        "q": "Hello world",
+        "source": "auto",
+        "target": "es",
+        "format": "text",
+    }
+    assert captured["headers"]["content-type"] == "application/json"
+
+
+@pytest.mark.asyncio
+async def test_libre_sends_api_key_header():
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.headers.get("authorization") == "Bearer secret-key"
+        return httpx.Response(200, json={"translatedText": "ok"})
+
+    with respx.mock() as router:
+        router.post(LIBRE_ENDPOINT).mock(side_effect=handler)
+        translator = make_libre(api_key="secret-key")
+        try:
+            assert await translator.translate_text("hola") == "ok"
+        finally:
+            await translator.aclose()
+
+
+@pytest.mark.asyncio
+async def test_libre_retry_429_then_ok():
+    with respx.mock() as router:
+        route = router.post(LIBRE_ENDPOINT)
+        route.side_effect = [
+            httpx.Response(429, headers={"retry-after": "0"}),
+            httpx.Response(200, json={"translatedText": "ok"}),
+        ]
+        translator = make_libre()
+        try:
+            assert await translator.translate_text("hola") == "ok"
+            assert route.call_count == 2
+        finally:
+            await translator.aclose()
+
+
+@pytest.mark.asyncio
+async def test_libre_reassembly_1to1():
+    def echo_handler_libre(request: httpx.Request) -> httpx.Response:
+        import json
+
+        q = json.loads(request.content)["q"]
+        return httpx.Response(200, json={"translatedText": q})
+
+    paragraphs = ["Hello there.", "How are you?", "Goodbye!"]
+    with respx.mock() as router:
+        router.post(LIBRE_ENDPOINT).mock(side_effect=echo_handler_libre)
+        translator = make_libre()
+        try:
+            result = await translate_paragraphs(paragraphs, translator)
+            assert result == paragraphs
+        finally:
+            await translator.aclose()
+
+
+def test_build_default_translator_default_google(monkeypatch):
+    monkeypatch.setattr(config, "TRANSLATE_BACKEND", "google")
+    assert isinstance(build_default_translator(), GoogleFreeTranslator)
+
+
+def test_build_default_translator_libre(monkeypatch):
+    monkeypatch.setattr(config, "TRANSLATE_BACKEND", "libre")
+    monkeypatch.setattr(config, "TRANSLATE_URL", "http://127.0.0.1:5000")
+    translator = build_default_translator()
+    assert isinstance(translator, LibreTranslateTranslator)
+    assert translator.base_url == "http://127.0.0.1:5000"

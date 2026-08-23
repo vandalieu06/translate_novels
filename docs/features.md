@@ -22,9 +22,11 @@
 
 ### Traducción
 - **Endpoint gratuito de Google Translate** (`translate_a/single` con `client=gtx`), sin clave ni token.
+- **Backend intercambiable**: backend local **LibreTranslate** (Docker/podman) vía `NOVEL_TRANSLATE_BACKEND=libre` para pruebas sin rate-limit.
 - **Párrafo a párrafo** con chunking (~400 palabras) y **reensamblado 1:1**; el EPUB traducido conserva la estructura del original.
 - **Caché en disco** (`translated/<NNNN>.md`): no re-traduce lo ya hecho; retry/pacing ante 429/503.
 - `-t/--translate` genera el EPUB original **y** el traducido (`Novela 1-50 (ES).epub`).
+- **`--translate-pending`**: traduce solo los capítulos pendientes (ya descargados, sin traducir) sin descargar nuevos ni tocar el TOC — ideal para retomar una traducción cortada por rate-limit.
 
 ### CLI
 - Comando único `novel-cli <url>` con flags `-o`, `-v`, `-t`, `--resume/--no-resume`, `-f`, `--all`, `-p`, `-c`, `-V`.

@@ -39,6 +39,7 @@ Esto te da un primer volumen al instante sin bajar toda la novela de golpe. Para
 | `--resume / --no-resume` | Reanudar según `.manifest.json` (default: `--resume`). |
 | `-f, --force` | Ignora el manifest y re-descarga (y re-traduce) todo. |
 | `--all` | Descarga **todos** los capítulos de golpe (en vez de un tomo por ejecución). |
+| `--translate-pending` | Traduce **solo los capítulos pendientes** (ya descargados pero sin traducir) sin descargar nuevos; retoma el trabajo colgado desde el manifest previo (sin red). |
 | `-p, --playwright` | Fuerza Playwright para todo (sin intentar HTTP primero). |
 | `-c, --concurrency <n>` | Workers del pool de descarga (default: 4). |
 | `-V, --verbose` | Logs detallados y traceback. |
@@ -106,9 +107,42 @@ output/
 - Respeta pacing (~1,5 s entre peticiones), retry con backoff (5 reintentos, base 5 s) y `Retry-After` (hasta 60 s) ante 429/503, con un cool-down compartido para toda la pasada de traducción. Si el endpoint te limita de forma persistente, saldrá con código 3; re-ejecuta más tarde para continuar (la caché evita re-traducir lo hecho).
 - El pacer es ajustable por env: `NOVEL_TRANSLATE_PACER_MS` (ms entre peticiones).
 
+### Traducción local con Docker/podman (LibreTranslate)
+
+Si Google te limita, puedes levantar un motor local sin rate-limit (LibreTranslate) y apuntar el CLI:
+
+```bash
+# 1. Levantar LibreTranslate (podman rootless + docker-compose instalado)
+podman compose up -d           # primer arranque descarga modelos (minutos)
+
+# 2. Probar la API local
+curl -X POST localhost:5000/translate -H 'Content-Type: application/json' \
+     -d '{"q":"Hello","source":"auto","target":"es","format":"text"}'
+
+# 3. Usar novel-cli con LibreTranslate
+NOVEL_TRANSLATE_BACKEND=libre uv run novel-cli -t <url>
+```
+
+- El `compose.yaml` del repo expone el puerto solo en `127.0.0.1` y guarda los modelos en un volumen con nombre.
+- Configuración vía env: `NOVEL_TRANSLATE_BACKEND` (`google`|`libre`), `NOVEL_TRANSLATE_URL` (default `http://localhost:5000`) y `NOVEL_TRANSLATE_API_KEY` (opcional).
+
+### Retomar traducción pendiente (`--translate-pending`)
+
+Si una traducción se cortó (p. ej. por rate-limit), puedes traducir **solo lo colgado** sin volver a descargar ni avanzar de tomo:
+
+```bash
+uv run novel-cli -t <url>                  # se corta a mitad...
+uv run novel-cli --translate-pending <url> # traduce solo lo pendiente, sin red
+```
+
+Busca el manifest previo por `source_url`, traduce los capítulos que falten en `translated/` y regenera los EPUB `(ES)` que falten. No descarga capítulos nuevos ni toca el TOC.
+
 ## Variables de entorno
 
 | Variable | Uso |
 |---|---|
 | `NOVEL_OUTPUT_DIR` | Directorio de salida por defecto (si no se pasa `-o`). |
 | `NOVEL_TRANSLATE_PACER_MS` | Milisegundos entre peticiones de traducción (default: 1500). |
+| `NOVEL_TRANSLATE_BACKEND` | Backend de traducción: `google` (default) o `libre`. |
+| `NOVEL_TRANSLATE_URL` | Base URL de LibreTranslate (default: `http://localhost:5000`). |
+| `NOVEL_TRANSLATE_API_KEY` | API key opcional para LibreTranslate. |

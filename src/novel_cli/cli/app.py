@@ -23,7 +23,7 @@ from novel_cli.core.scraper.fetcher import (
 )
 from novel_cli.core.services.download import DownloadError
 from novel_cli.core.services.pipeline import PipelineError, run_pipeline
-from novel_cli.core.services.translate import GoogleFreeTranslator, TranslateError
+from novel_cli.core.services.translate import TranslateError, build_default_translator
 
 EXIT_OK = 0
 EXIT_VALIDATION = 1
@@ -83,6 +83,14 @@ def run(
             help="Descargar todos los capitulos de golpe (en vez de un tomo por ejecucion)",
         ),
     ] = False,
+    translate_pending: Annotated[
+        bool,
+        typer.Option(
+            "--translate-pending",
+            help="Traducir solo los capitulos pendientes (ya descargados) sin descargar "
+            "nuevos; retoma el trabajo colgado desde el manifest previo",
+        ),
+    ] = False,
     playwright: Annotated[
         bool,
         typer.Option(
@@ -122,7 +130,9 @@ def run(
             http = HttpFetcher(pacer=Pacer(), cooldown=CooldownGate())
             playwright_fetcher = PlaywrightFetcher()
             fetcher = get_fetcher(http, playwright_fetcher, force_playwright=playwright)
-            translator = GoogleFreeTranslator() if translate else None
+            translator = (
+                build_default_translator() if (translate or translate_pending) else None
+            )
 
             async def _pipeline() -> object:
                 try:
@@ -135,6 +145,7 @@ def run(
                         force=force,
                         concurrency=concurrency,
                         download_all=all_chapters,
+                        translate_pending=translate_pending,
                         fetcher=fetcher,
                         translator=translator,
                         on_status=ui.status,

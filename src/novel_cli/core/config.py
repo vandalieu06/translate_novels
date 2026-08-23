@@ -38,6 +38,11 @@ TRANSLATE_RETRY_RATE_LIMIT = 5
 TRANSLATE_BACKOFF_BASE_SECONDS = 5.0
 TRANSLATE_RETRY_AFTER_MAX_SECONDS = 60.0
 
+# Selector de backend de traduccion (para pruebas locales con LibreTranslate).
+TRANSLATE_BACKEND = os.environ.get("NOVEL_TRANSLATE_BACKEND", "google")  # google | libre
+TRANSLATE_URL = os.environ.get("NOVEL_TRANSLATE_URL", "http://localhost:5000")
+TRANSLATE_API_KEY = os.environ.get("NOVEL_TRANSLATE_API_KEY") or None
+
 
 def default_output() -> Path:
     """Directorio de salida por defecto.

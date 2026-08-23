@@ -61,6 +61,7 @@ def run_kwargs(
     force=False,
     volume_size=None,
     download_all=False,
+    translate_pending=False,
     translator=None,
 ):
     return {
@@ -72,6 +73,7 @@ def run_kwargs(
         "force": force,
         "concurrency": 2,
         "download_all": download_all,
+        "translate_pending": translate_pending,
         "fetcher": fetcher,
         "adapter": GenericAdapter(),
         "translator": translator,
@@ -277,3 +279,61 @@ async def test_pipeline_translate_without_translator_raises(tmp_path, fixture_lo
     fetcher = FakeFetcher(fixture_loader("generic_toc.html"))
     with pytest.raises(PipelineError):
         await run_pipeline(**run_kwargs(tmp_path, fetcher, translate=True, translator=None))
+
+
+@pytest.mark.asyncio
+async def test_translate_pending_without_download(tmp_path, fixture_loader):
+    toc = fixture_loader("generic_toc.html")
+
+    first = FakeFetcher(toc)
+    await run_pipeline(
+        **run_kwargs(tmp_path, first, volume_size=2, translate=True, translator=FakeTranslator())
+    )
+    slug_dir = tmp_path / "the-eternal-journey"
+    # simular un capitulo que quedo pendiente de traducir
+    (slug_dir / "translated" / "0002.md").unlink()
+
+    second = FakeFetcher(toc)
+    translator2 = FakeTranslator()
+    manifest2 = await run_pipeline(
+        **run_kwargs(
+            tmp_path,
+            second,
+            translate_pending=True,
+            translator=translator2,
+        )
+    )
+    # sin red: ni TOC ni capitulos nuevos
+    assert second.toc_calls == 0
+    assert second.chapter_calls == 0
+    # no descargo el siguiente tomo
+    assert not (slug_dir / "raw" / "0003.md").exists()
+    # el pendiente se tradujo y el manifest quedó consistente
+    assert (slug_dir / "translated" / "0002.md").exists()
+    assert manifest2.chapters_translated == 2
+    assert manifest2.translated is True
+    assert translator2.calls >= 1
+
+
+@pytest.mark.asyncio
+async def test_translate_pending_no_manifest_raises(tmp_path, fixture_loader):
+    fetcher = FakeFetcher(fixture_loader("generic_toc.html"))
+    with pytest.raises(PipelineError):
+        await run_pipeline(
+            **run_kwargs(
+                tmp_path, fetcher, translate_pending=True, translator=FakeTranslator()
+            )
+        )
+
+
+@pytest.mark.asyncio
+async def test_translate_pending_no_translator_raises(tmp_path, fixture_loader):
+    toc = fixture_loader("generic_toc.html")
+    fetcher = FakeFetcher(toc)
+    await run_pipeline(
+        **run_kwargs(tmp_path, fetcher, volume_size=2, translate=True, translator=FakeTranslator())
+    )
+    with pytest.raises(PipelineError):
+        await run_pipeline(
+            **run_kwargs(tmp_path, fetcher, translate_pending=True, translator=None)
+        )

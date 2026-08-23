@@ -11,7 +11,7 @@ from novel_cli.cli.app import app
 from novel_cli.core.models.state import Manifest
 from novel_cli.core.scraper.fetcher import FetchError
 from novel_cli.core.services.pipeline import PipelineError
-from novel_cli.core.services.translate import TranslateError
+from novel_cli.core.services.translate import GoogleFreeTranslator, TranslateError
 
 cli_app_module = importlib.import_module("novel_cli.cli.app")
 
@@ -26,7 +26,8 @@ def test_help_documents_command():
     assert "run" in result.output
     assert "URL de la web novel" in result.output
     for flag in ("--output", "--volume-size", "--translate", "--resume", "--force",
-                 "--playwright", "--concurrency", "--verbose", "--all"):
+                 "--playwright", "--concurrency", "--verbose", "--all",
+                 "--translate-pending"):
         assert flag in result.output
 
 
@@ -84,6 +85,21 @@ def test_all_flag_passes_download_all(monkeypatch, tmp_path):
     assert result.exit_code == 0
     assert captured["volume_size"] == 100
     assert captured["download_all"] is True
+
+
+def test_translate_pending_flag_builds_translator(monkeypatch, tmp_path):
+    captured: dict[str, Any] = {}
+
+    async def fake(**kwargs: Any) -> Manifest:
+        captured.update(kwargs)
+        return Manifest(slug="novela", title="Novela")
+
+    monkeypatch.setattr(cli_app_module, "run_pipeline", fake)
+    result = runner.invoke(app, [NOVEL_URL, "-o", str(tmp_path), "--translate-pending"])
+    assert result.exit_code == 0
+    assert captured["translate_pending"] is True
+    assert captured["translate"] is False
+    assert isinstance(captured["translator"], GoogleFreeTranslator)
 
 
 def test_success_exit_0(monkeypatch, tmp_path):
