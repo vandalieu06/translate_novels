@@ -8,7 +8,7 @@ from urllib.parse import urljoin
 from lxml import html as lh
 
 from novel_cli.core.models.novel import Chapter, NovelMetadata, SiteMetadata
-from novel_cli.core.utils.text import clean_text, guess_chapter_num
+from novel_cli.core.utils.text import anchor_title, clean_text, guess_chapter_num
 
 _NUMBERED_TITLE = re.compile(r"(?:chapter|ch\.?|cap(?:itulo)?|第|章节)", re.IGNORECASE)
 _HREF_DIGIT_RUN = re.compile(r"\d{3,}")
@@ -40,7 +40,7 @@ class GenericAdapter:
             if url in seen:
                 continue
             seen.add(url)
-            text = clean_text(anchor.text_content())
+            text = anchor_title(anchor)
             num = guess_chapter_num(text, href, fallback)
             chapters.append(Chapter(num=num, title=text or href, url=url))
             fallback += 1
@@ -72,13 +72,19 @@ class GenericAdapter:
         return paragraphs
 
     def next_page(self, html: str, base_url: str) -> str | None:
+        """Sigue la paginacion del TOC: enlaces con ``rel=\"next\"``."""
+        root = lh.fromstring(html)
+        for anchor in root.cssselect("a[rel='next'], link[rel='next']"):
+            href = anchor.get("href")
+            if href:
+                return urljoin(base_url, href)
         return None
 
 
 def _find_candidates(root) -> list:
     out: list = []
     for anchor in root.cssselect("a[href]"):
-        text = clean_text(anchor.text_content())
+        text = anchor_title(anchor)
         href = anchor.get("href") or ""
         if _NUMBERED_TITLE.search(text) and any(ch.isdigit() for ch in text):
             out.append(anchor)

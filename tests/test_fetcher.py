@@ -257,6 +257,28 @@ async def test_playwright_required_error_when_none():
             await fetcher.aclose()
 
 
+@pytest.mark.asyncio
+async def test_fetch_html_decodes_brotli():
+    import brotli
+
+    body = b"<html><body><h1>hola</h1><p>mundo</p></body></html>"
+    with respx.mock() as router:
+        router.get(URL).mock(
+            return_value=httpx.Response(
+                200,
+                content=brotli.compress(body),
+                headers={"content-encoding": "br"},
+            )
+        )
+        fetcher = make_fetcher()
+        try:
+            html = await fetcher.fetch_html(URL)
+            assert "<h1>hola</h1>" in html
+            assert "<p>mundo</p>" in html
+        finally:
+            await fetcher.aclose()
+
+
 def test_parse_retry_after():
     assert parse_retry_after("5") == 5.0
     assert parse_retry_after("0.5") == 0.5

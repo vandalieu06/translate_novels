@@ -7,7 +7,7 @@ from urllib.parse import urljoin
 from lxml import html as lh
 
 from novel_cli.core.models.novel import Chapter, NovelMetadata, SiteMetadata
-from novel_cli.core.utils.text import clean_text, guess_chapter_num
+from novel_cli.core.utils.text import anchor_title, clean_text, guess_chapter_num
 
 SEL_TITLE = ".novel-title"
 SEL_COVER = ".fixed-img .cover img"
@@ -37,7 +37,7 @@ class NovelfireAdapter:
             href = anchor.get("href")
             if not href:
                 continue
-            text = clean_text(anchor.text_content())
+            text = anchor_title(anchor)
             if not text:
                 continue
             url = urljoin(base_url, href)

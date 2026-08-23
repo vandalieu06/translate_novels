@@ -60,7 +60,10 @@ async def run_pipeline(
     site = await fetch_site_metadata(fetcher, adapter, url)
     metadata = site.metadata
     if not site.chapters:
-        raise PipelineError("no se encontraron capitulos en el TOC")
+        raise PipelineError(
+            "no se encontraron capitulos en el TOC. "
+            "Puede requerir JS: prueba -p/--playwright, o el sitio bloquea el acceso."
+        )
 
     slug = slugify(metadata.title)
     slug_dir = output_dir / slug

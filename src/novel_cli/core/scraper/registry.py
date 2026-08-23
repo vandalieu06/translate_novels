@@ -10,6 +10,7 @@ from novel_cli.core.scraper.sites.novelfire import NovelfireAdapter
 
 _ADAPTER_CLASSES: dict[str, type[SiteAdapter]] = {
     "novelfire.net": NovelfireAdapter,
+    "novelphoenix.com": NovelfireAdapter,  # mismo engine que NovelFire
 }
 
 

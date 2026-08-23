@@ -7,12 +7,20 @@ import re
 _CHAPTER_NUM = re.compile(
     r"(?:chapter|ch\.?|cap(?:itulo)?|第|章节)\s*\.?\s*(\d+)", re.IGNORECASE
 )
-_HREF_CHAPTER = re.compile(r"/chapter[s]?/(\d+)", re.IGNORECASE)
+_HREF_CHAPTER = re.compile(r"/chapter[s]?[-/](\d+)", re.IGNORECASE)
 
 
 def clean_text(raw: str) -> str:
     """Colapsa whitespace y recorta."""
     return " ".join(raw.split())
+
+
+def anchor_title(anchor) -> str:
+    """Texto limpio de un enlace: prioriza el atributo ``title``."""
+    raw = anchor.get("title")
+    if raw:
+        return clean_text(raw)
+    return clean_text(anchor.text_content())
 
 
 def guess_chapter_num(text: str, href: str, fallback: int) -> int:

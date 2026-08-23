@@ -66,3 +66,45 @@ def test_generic_no_pagination():
 def test_generic_tocs_is_novel_url():
     adapter = GenericAdapter()
     assert adapter.tocs(GENERIC_URL) == [GENERIC_URL]
+
+
+def test_generic_uses_title_attribute_for_clean_titles(fixture_loader):
+    adapter = GenericAdapter()
+    html = fixture_loader("novelphoenix_toc.html")
+    site = adapter.parse_toc(html, base_url=GENERIC_URL)
+    assert [c.title for c in site.chapters] == [
+        "Chapter 1: The Beginning",
+        "Chapter 2: Facing The Villainesses",
+        "Chapter 174: Aftermath of the Dance",
+    ]
+    assert [c.num for c in site.chapters] == [1, 2, 174]
+    assert site.chapters[2].url == (
+        "https://readhere.example/novel/"
+        "my-step-daughters-are-the-villainesses/chapter-174"
+    )
+
+
+def test_generic_next_page_follows_rel_next(fixture_loader):
+    adapter = GenericAdapter()
+    html = fixture_loader("novelphoenix_toc.html")
+    base = "https://readhere.example/eternal/chapters"
+    assert adapter.next_page(html, base) == "https://readhere.example/eternal/chapters?page=2"
+
+
+def test_generic_href_fallback_num(fixture_loader):
+    adapter = GenericAdapter()
+    html = fixture_loader("novelphoenix_toc.html").replace(
+        'title="Chapter 174: Aftermath of the Dance"',
+        'title="A Surprise Chapter"',
+    ).replace(
+        "Chapter 174: Aftermath of the Dance",
+        "A Surprise Chapter",
+    )
+    site = adapter.parse_toc(html, base_url=GENERIC_URL)
+    # sin texto numerado, el numero sale del href /chapter-174
+    assert any(c.num == 174 for c in site.chapters)
+
+
+def test_registry_novelphoenix_maps_to_novelfire():
+    adapter = get_adapter("https://novelphoenix.com/novel/something")
+    assert adapter.name == "novelfire"
