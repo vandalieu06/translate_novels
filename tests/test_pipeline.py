@@ -60,6 +60,7 @@ def run_kwargs(
     resume=True,
     force=False,
     volume_size=None,
+    download_all=False,
     translator=None,
 ):
     return {
@@ -70,6 +71,7 @@ def run_kwargs(
         "resume": resume,
         "force": force,
         "concurrency": 2,
+        "download_all": download_all,
         "fetcher": fetcher,
         "adapter": GenericAdapter(),
         "translator": translator,
@@ -132,8 +134,9 @@ async def test_pipeline_without_translate(tmp_path, fixture_loader):
 async def test_pipeline_volumes(tmp_path, fixture_loader):
     fetcher = FakeFetcher(fixture_loader("generic_toc.html"))
     manifest = await run_pipeline(
-        **run_kwargs(tmp_path, fetcher, volume_size=2)
+        **run_kwargs(tmp_path, fetcher, volume_size=2, download_all=True)
     )
+    assert fetcher.chapter_calls == 4
     assert manifest.epub_original == [
         "The Eternal Journey 1-2.epub",
         "The Eternal Journey 3-4.epub",
@@ -141,6 +144,88 @@ async def test_pipeline_volumes(tmp_path, fixture_loader):
     slug_dir = tmp_path / "the-eternal-journey"
     assert (slug_dir / "The Eternal Journey 1-2.epub").exists()
     assert (slug_dir / "The Eternal Journey 3-4.epub").exists()
+
+
+@pytest.mark.asyncio
+async def test_pipeline_default_batch_downloads_first_volume(tmp_path, fixture_loader):
+    fetcher = FakeFetcher(fixture_loader("generic_toc.html"))
+    manifest = await run_pipeline(
+        **run_kwargs(tmp_path, fetcher, volume_size=2)
+    )
+    # solo el primer tomo se descarga
+    assert fetcher.chapter_calls == 2
+    assert manifest.chapters_downloaded == 2
+    assert manifest.chapters_total == 2
+    assert manifest.epub_original == ["The Eternal Journey 1-2.epub"]
+    slug_dir = tmp_path / "the-eternal-journey"
+    assert (slug_dir / "raw" / "0001.md").exists()
+    assert (slug_dir / "raw" / "0002.md").exists()
+    assert not (slug_dir / "raw" / "0003.md").exists()
+    assert not (slug_dir / "The Eternal Journey 3-4.epub").exists()
+
+
+@pytest.mark.asyncio
+async def test_pipeline_rerun_advances_next_volume(tmp_path, fixture_loader):
+    toc = fixture_loader("generic_toc.html")
+
+    first = FakeFetcher(toc)
+    await run_pipeline(**run_kwargs(tmp_path, first, volume_size=2))
+    assert first.chapter_calls == 2
+    slug_dir = tmp_path / "the-eternal-journey"
+    epub_1_2 = slug_dir / "The Eternal Journey 1-2.epub"
+    before = epub_1_2.read_bytes()
+
+    second = FakeFetcher(toc)
+    manifest2 = await run_pipeline(**run_kwargs(tmp_path, second, volume_size=2))
+    assert second.chapter_calls == 2
+    assert manifest2.chapters_downloaded == 4
+    assert (slug_dir / "raw" / "0003.md").exists()
+    assert (slug_dir / "raw" / "0004.md").exists()
+    # el tomo 1-2 no se reescribe; se anade el 3-4
+    assert epub_1_2.read_bytes() == before
+    assert (slug_dir / "The Eternal Journey 3-4.epub").exists()
+    assert manifest2.epub_original == [
+        "The Eternal Journey 1-2.epub",
+        "The Eternal Journey 3-4.epub",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_pipeline_rerun_idempotent_after_complete(tmp_path, fixture_loader):
+    toc = fixture_loader("generic_toc.html")
+
+    first = FakeFetcher(toc)
+    await run_pipeline(**run_kwargs(tmp_path, first, volume_size=2))
+    await run_pipeline(**run_kwargs(tmp_path, first, volume_size=2))
+    slug_dir = tmp_path / "the-eternal-journey"
+    epub_1_2 = slug_dir / "The Eternal Journey 1-2.epub"
+    epub_3_4 = slug_dir / "The Eternal Journey 3-4.epub"
+    before = (epub_1_2.read_bytes(), epub_3_4.read_bytes())
+
+    third = FakeFetcher(toc)
+    manifest3 = await run_pipeline(**run_kwargs(tmp_path, third, volume_size=2))
+    assert third.chapter_calls == 0
+    assert manifest3.chapters_downloaded == 4
+    assert (epub_1_2.read_bytes(), epub_3_4.read_bytes()) == before
+
+
+@pytest.mark.asyncio
+async def test_pipeline_force_redownloads_first_volume(tmp_path, fixture_loader):
+    toc = fixture_loader("generic_toc.html")
+
+    first = FakeFetcher(toc)
+    await run_pipeline(**run_kwargs(tmp_path, first, volume_size=2))
+    assert first.chapter_calls == 2
+
+    second = FakeFetcher(toc)
+    manifest2 = await run_pipeline(
+        **run_kwargs(tmp_path, second, volume_size=2, force=True)
+    )
+    assert second.chapter_calls == 2
+    assert manifest2.chapters_downloaded == 2
+    slug_dir = tmp_path / "the-eternal-journey"
+    assert (slug_dir / "The Eternal Journey 1-2.epub").exists()
+    assert not (slug_dir / "The Eternal Journey 3-4.epub").exists()
 
 
 @pytest.mark.asyncio

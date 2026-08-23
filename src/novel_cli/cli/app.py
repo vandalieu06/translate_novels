@@ -49,12 +49,12 @@ def run(
         ),
     ] = None,
     volume_size: Annotated[
-        int | None,
+        int,
         typer.Option(
             "--volume-size", "-v",
-            help="Capitulos por volumen: 50, 100, o sin valor = un solo EPUB",
+            help="Capitulos por volumen: 50 o 100 (default: 50)",
         ),
-    ] = None,
+    ] = config.DEFAULT_VOLUME_SIZE,
     translate: Annotated[
         bool,
         typer.Option(
@@ -74,6 +74,13 @@ def run(
         typer.Option(
             "--force", "-f",
             help="Ignorar manifest y re-descargar todo",
+        ),
+    ] = False,
+    all_chapters: Annotated[
+        bool,
+        typer.Option(
+            "--all",
+            help="Descargar todos los capitulos de golpe (en vez de un tomo por ejecucion)",
         ),
     ] = False,
     playwright: Annotated[
@@ -98,7 +105,7 @@ def run(
     """Descarga una web novel, la convierte a EPUB y opcionalmente la traduce."""
     if not _valid_url(url):
         _fail("URL invalida: debe ser http(s)", EXIT_VALIDATION)
-    if volume_size is not None and volume_size not in (50, 100):
+    if volume_size not in (50, 100):
         _fail("--volume-size solo acepta 50 o 100", EXIT_VALIDATION)
     if concurrency < 1:
         _fail("--concurrency debe ser >= 1", EXIT_VALIDATION)
@@ -127,6 +134,7 @@ def run(
                         resume=resume,
                         force=force,
                         concurrency=concurrency,
+                        download_all=all_chapters,
                         fetcher=fetcher,
                         translator=translator,
                         on_status=ui.status,

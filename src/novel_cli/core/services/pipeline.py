@@ -43,6 +43,7 @@ async def run_pipeline(
     resume: bool,
     force: bool,
     concurrency: int,
+    download_all: bool = False,
     fetcher: Fetcher,
     adapter: SiteAdapter | None = None,
     translator: Translator | None = None,
@@ -78,11 +79,18 @@ async def run_pipeline(
 
     if on_status:
         on_status("Descargando capitulos")
+    batch = _download_batch(
+        site.chapters,
+        volume_size,
+        slug_dir / "raw",
+        download_all=download_all,
+        force=force,
+    )
     await download_chapters(
         fetcher=fetcher,
         adapter=adapter,
         metadata=metadata,
-        chapters=site.chapters,
+        chapters=batch,
         slug_dir=slug_dir,
         manifest=manifest,
         force=force,
@@ -90,6 +98,7 @@ async def run_pipeline(
         pacer=pacer,
         on_progress=on_download_progress,
     )
+    manifest.chapters_total = manifest.chapters_downloaded
     loaded = _load_all_chapters(site.chapters, slug_dir / "raw")
     manifest.save(slug_dir)
 
@@ -158,11 +167,6 @@ def _generate_epubs(
     force: bool,
     on_progress: ProgressCallback | None,
 ) -> list[str]:
-    if resume and not force:
-        current = manifest.epub_translated if translated else manifest.epub_original
-        if _files_exist(slug_dir, current):
-            return current
-
     base = title_to_filename(metadata.title) or manifest.slug
     volumes = generate_volumes(chapters, volume_size)
     suffix = " (ES)" if translated else ""
@@ -174,21 +178,43 @@ def _generate_epubs(
         else:
             title = f"{metadata.title} {volume.start}-{volume.end}"
             name = volume_name(base, volume.start, volume.end, suffix)
-        cover_path = str(slug_dir / manifest.cover_path) if manifest.cover_path else None
-        data = build_epub(
-            title=title,
-            author=metadata.author,
-            language=language,
-            identifier=stable_identifier(metadata.source_url),
-            chapters=volume.chapters,
-            cover_path=cover_path,
-            translated=translated,
-        )
-        (slug_dir / name).write_bytes(data)
+        out_path = slug_dir / name
+        if not (resume and not force) or not out_path.exists():
+            cover_path = (
+                str(slug_dir / manifest.cover_path) if manifest.cover_path else None
+            )
+            data = build_epub(
+                title=title,
+                author=metadata.author,
+                language=language,
+                identifier=stable_identifier(metadata.source_url),
+                chapters=volume.chapters,
+                cover_path=cover_path,
+                translated=translated,
+            )
+            out_path.write_bytes(data)
         names.append(name)
         if on_progress:
             on_progress(index, len(volumes))
     return names
+
+
+def _download_batch(
+    chapters: list[Chapter],
+    volume_size: int | None,
+    raw_dir: Path,
+    *,
+    download_all: bool,
+    force: bool,
+) -> list[Chapter]:
+    """Selecciona el lote a descargar: todo, o el proximo tomo pendiente."""
+    if download_all or volume_size is None:
+        return chapters
+    if force:
+        return chapters[:volume_size]
+    existing = {int(path.stem) for path in raw_dir.glob("*.md")}
+    pending = [chapter for chapter in chapters if chapter.num not in existing]
+    return pending[:volume_size]
 
 
 def _load_or_create_manifest(
@@ -222,18 +248,13 @@ def _load_or_create_manifest(
 
 
 def _load_all_chapters(chapters: list[Chapter], chapter_dir: Path) -> list[Chapter]:
+    """Carga de disco solo los capitulos que tienen archivo (en orden TOC)."""
     loaded: list[Chapter] = []
     for chapter in chapters:
         path = chapter_dir / chapter_filename(chapter.num)
         if path.exists():
             loaded.append(load_chapter(path, chapter.num, chapter.url))
-        else:
-            loaded.append(chapter)
     return loaded
-
-
-def _files_exist(slug_dir: Path, names: list[str]) -> bool:
-    return bool(names) and all((slug_dir / name).exists() for name in names)
 
 
 def _epub_language(code: str) -> str:

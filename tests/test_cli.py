@@ -26,7 +26,7 @@ def test_help_documents_command():
     assert "run" in result.output
     assert "URL de la web novel" in result.output
     for flag in ("--output", "--volume-size", "--translate", "--resume", "--force",
-                 "--playwright", "--concurrency", "--verbose"):
+                 "--playwright", "--concurrency", "--verbose", "--all"):
         assert flag in result.output
 
 
@@ -42,6 +42,12 @@ def test_invalid_volume_size_exit_1():
     assert "50 o 100" in result.output
 
 
+def test_volume_size_zero_rejected_exit_1():
+    result = runner.invoke(app, [NOVEL_URL, "--volume-size", "0"])
+    assert result.exit_code == 1
+    assert "50 o 100" in result.output
+
+
 def test_invalid_concurrency_exit_1():
     result = runner.invoke(app, [NOVEL_URL, "--concurrency", "0"])
     assert result.exit_code == 1
@@ -50,6 +56,34 @@ def test_invalid_concurrency_exit_1():
 
 async def _fake_pipeline(**kwargs: Any) -> Manifest:
     return Manifest(slug="novela", title="Novela")
+
+
+def test_default_volume_size_50(monkeypatch, tmp_path):
+    captured: dict[str, Any] = {}
+
+    async def fake(**kwargs: Any) -> Manifest:
+        captured.update(kwargs)
+        return Manifest(slug="novela", title="Novela")
+
+    monkeypatch.setattr(cli_app_module, "run_pipeline", fake)
+    result = runner.invoke(app, [NOVEL_URL, "-o", str(tmp_path)])
+    assert result.exit_code == 0
+    assert captured["volume_size"] == 50
+    assert captured["download_all"] is False
+
+
+def test_all_flag_passes_download_all(monkeypatch, tmp_path):
+    captured: dict[str, Any] = {}
+
+    async def fake(**kwargs: Any) -> Manifest:
+        captured.update(kwargs)
+        return Manifest(slug="novela", title="Novela")
+
+    monkeypatch.setattr(cli_app_module, "run_pipeline", fake)
+    result = runner.invoke(app, [NOVEL_URL, "-o", str(tmp_path), "--all", "-v", "100"])
+    assert result.exit_code == 0
+    assert captured["volume_size"] == 100
+    assert captured["download_all"] is True
 
 
 def test_success_exit_0(monkeypatch, tmp_path):
