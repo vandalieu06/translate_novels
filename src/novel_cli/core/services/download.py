@@ -70,7 +70,7 @@ async def download_chapters(
                 return
             paragraphs = adapter.parse_chapter(html, chapter.url)
             raw_dir.joinpath(chapter_filename(chapter.num)).write_text(
-                _format_chapter(chapter, paragraphs), encoding="utf-8"
+                format_chapter(chapter, paragraphs), encoding="utf-8"
             )
             completed.append(chapter)
         done += 1
@@ -116,7 +116,7 @@ def load_chapter(path: Path, num: int, url: str) -> Chapter:
     return Chapter(num=num, title=title, url=url, paragraphs=paragraphs)
 
 
-def _format_chapter(chapter: Chapter, paragraphs: list[str]) -> str:
+def format_chapter(chapter: Chapter, paragraphs: list[str]) -> str:
     body = "\n\n".join(paragraphs)
     return f"# {chapter.title}\n\n{body}\n"
 

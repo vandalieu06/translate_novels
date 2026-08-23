@@ -15,6 +15,7 @@ from novel_cli.core.scraper.fetcher import Pacer
 from novel_cli.core.services.download import (
     DownloadError,
     download_chapters,
+    format_chapter,
     load_chapter,
 )
 from novel_cli.core.utils.names import chapter_filename
@@ -284,9 +285,7 @@ def test_load_chapter_roundtrip(tmp_path):
         paragraphs=["a", "b", "c"],
     )
     path = tmp_path / "0042.md"
-    from novel_cli.core.services.download import _format_chapter
-
-    path.write_text(_format_chapter(ch, ch.paragraphs), encoding="utf-8")
+    path.write_text(format_chapter(ch, ch.paragraphs), encoding="utf-8")
     loaded = load_chapter(path, 42, ch.url)
     assert loaded.num == 42
     assert loaded.title == "Chapter 42"
