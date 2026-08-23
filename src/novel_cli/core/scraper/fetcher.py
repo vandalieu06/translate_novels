@@ -284,7 +284,12 @@ class FallbackFetcher:
     ) -> str | bytes:
         if self.playwright is None:
             raise FetchError(f"playwright fallback unavailable for {url}")
-        result = await getattr(self.playwright, method)(url, headers=headers)
+        try:
+            result = await getattr(self.playwright, method)(url, headers=headers)
+        except FetchError:
+            raise
+        except Exception as exc:  # noqa: BLE001 - playwright error -> error de red
+            raise FetchError(f"playwright fallback failed for {url}: {exc}") from exc
         assert isinstance(result, (str, bytes))
         return result
 
