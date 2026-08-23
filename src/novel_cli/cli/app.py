@@ -1,68 +1,80 @@
-from novel_cli.core.repository import RepostoryNovel, RepostoryNovelChapter
-from novel_cli.core.scrapper import ScrapperNovelFire
-from novel_cli.core.translate import Translate
+"""CLI de novel_cli (typer). Orquesta core; no contiene logica de dominio."""
 
-repo_novel = RepostoryNovel()
-repo_chapter = RepostoryNovelChapter()
+from __future__ import annotations
 
+from typing import Annotated
 
-def print_novels(r: RepostoryNovel):
-    novels = r.get_all()
-    for n in novels:
-        print(n.id, n.title)
+import typer
 
+from novel_cli.core import config
 
-def print_novel_chapters(r: RepostoryNovelChapter, novel_id: int, limit: int = 20):
-    chapters = r.get_all(novel_id=novel_id)
-    if chapters:
-        for c in chapters[:limit]:
-            print(c.id, " - ", c.num_chapter, " - ", c.title.strip())
+app = typer.Typer(
+    name="novel-cli",
+    help="Descarga web novels y las convierte a EPUB, con traduccion opcional a espanol.",
+    no_args_is_help=True,
+)
 
 
-def print_novel_chapters_by_id(r: RepostoryNovelChapter, chapter_id: int):
-    chapter = r.get_by_id(id=chapter_id)
-    if chapter:
-        return chapter
+@app.command()
+def run(
+    url: Annotated[str, typer.Argument(help="URL de la web novel")],
+    output: Annotated[
+        str | None,
+        typer.Option(
+            "--output", "-o",
+            help="Directorio de salida (default: core/config.default_output)",
+        ),
+    ] = None,
+    volume_size: Annotated[
+        int | None,
+        typer.Option(
+            "--volume-size", "-v",
+            help="Capitulos por volumen: 50, 100, o sin valor = un solo EPUB",
+        ),
+    ] = None,
+    translate: Annotated[
+        bool,
+        typer.Option(
+            "--translate", "-t",
+            help="Traducir a espanol y generar EPUB traducido ademas del original",
+        ),
+    ] = False,
+    resume: Annotated[
+        bool,
+        typer.Option(
+            "--resume/--no-resume",
+            help="Reanudar desde el manifest si existe (default: si)",
+        ),
+    ] = True,
+    force: Annotated[
+        bool,
+        typer.Option("--force", "-f", help="Ignorar manifest y re-descargar todo"),
+    ] = False,
+    playwright: Annotated[
+        bool,
+        typer.Option(
+            "--playwright", "-p",
+            help="Forzar uso de Playwright para todo (sin intentar HTTP primero)",
+        ),
+    ] = False,
+    concurrency: Annotated[
+        int,
+        typer.Option("--concurrency", "-c", help="Workers del pool de descarga (default: 4)"),
+    ] = 4,
+    verbose: Annotated[
+        bool,
+        typer.Option("--verbose", "-V", help="Logs detallados"),
+    ] = False,
+) -> None:
+    """Descarga una web novel, la convierte a EPUB y opcionalmente la traduce."""
+    out = config.default_output() if output is None else __import__("pathlib").Path(output)
+    typer.echo(f"novel-cli: url={url} output={out} (implementacion pendiente)")
 
 
-def main():
-    print("NOVELAS")
-    print_novels(repo_novel)
-    print()
-    print("CAPITULOS")
-    print_novel_chapters(repo_chapter, 1, 29)
-    print()
-    print("INDIVIDUAL")
-    chapter = print_novel_chapters_by_id(repo_chapter, 885)
-    if chapter:
-        print(chapter.id)
-        print(chapter.title)
-        # print(chapter)
-        # print(chapter.content)
-        print("TRADUCCIONES")
-        Translate("cdsd").translate_novel(chapter.content.split("\n"))
+def main() -> None:
+    """Entry point del script `novel-cli`."""
+    app()
 
 
 if __name__ == "__main__":
     main()
-
-# novel = 'https://novelfire.net/book/inner-voice-all-heroines-hear-my-inner-voice'
-# scrapper = ScrapperNovelFire(novel)
-# portada = scrapper.get_portada()
-# pages_links_chapetrs = scrapper.get_chapters_pages(portada.url_chapter)
-
-# print(portada, '\n')
-# print(pages_links_chapetrs, '\n')
-
-# chapter_urls = []
-# print('\n---LINK NOVELAS---')
-# for i, url in enumerate(pages_links_chapetrs, start=1):
-#     print(f'\n{i}: {url}')
-#     links = scrapper.get_chapters_links(url)
-#     chapter_urls += links
-#     # print(links[:4])
-#     # sleep(20)
-
-# print('\n---Capitulo---')
-# chapter = scrapper.get_chapter(chapter_urls[1])
-# print(chapter)

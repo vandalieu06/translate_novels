@@ -1,3 +1,1 @@
-from dotenv import load_dotenv
-
-load_dotenv()
+"""Dominio puro: sin typer/rich/argv. Recibe dependencias por inyeccion."""

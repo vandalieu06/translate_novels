@@ -1,1 +1,1 @@
-from .calc_time import calc_time
+"""Utilidades core: texto (chunking) y nombres (slug/naming de volumenes)."""

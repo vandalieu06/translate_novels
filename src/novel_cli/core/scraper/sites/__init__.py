@@ -1,0 +1,1 @@
+"""Adaptadores de sitio concretos."""

@@ -1,3 +1,5 @@
-from dotenv import load_dotenv
+"""Capa CLI: typer + progreso rich. No contiene logica de dominio."""
 
-load_dotenv()
+from novel_cli.cli.app import app
+
+__all__ = ["app"]

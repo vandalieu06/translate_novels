@@ -1,0 +1,1 @@
+"""Scrapers de sitios: Fetcher, SiteAdapter, registry y adaptadores."""

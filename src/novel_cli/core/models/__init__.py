@@ -1,5 +1,1 @@
-from .models import NovelModel, NovelChapterModel
-# from .websites import
-from .llm import LLMTranslate
-
-# __all__ = ["NovelModel", "NovelChapterModel"]
+"""Modelos de dominio (dataclasses) y estado en disco (Manifest pydantic)."""
