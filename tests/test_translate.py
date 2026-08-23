@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import time
+
 import httpx
 import pytest
 import respx
@@ -9,7 +11,7 @@ import respx
 from novel_cli.core.config import DEFAULT_MAX_WORDS_PER_CHUNK
 from novel_cli.core.models.novel import Chapter
 from novel_cli.core.models.state import Manifest
-from novel_cli.core.scraper.fetcher import Pacer
+from novel_cli.core.scraper.fetcher import CooldownGate, Pacer
 from novel_cli.core.services.translate import (
     GTX_ENDPOINT,
     GoogleFreeTranslator,
@@ -181,6 +183,63 @@ async def test_persistent_429_raises():
             assert route.call_count == 4
         finally:
             await translator.aclose()
+
+
+def test_rate_delay_caps_retry_after():
+    translator = GoogleFreeTranslator()
+    capped = translator._rate_delay(
+        httpx.Response(429, headers={"retry-after": "120"}), 0
+    )
+    assert capped == 60.0
+    # sin Retry-After: backoff base 5 * 2^attempt, cap 60
+    plain = httpx.Response(429)
+    assert translator._rate_delay(plain, 0) == 5.0
+    assert translator._rate_delay(plain, 2) == 20.0
+    assert translator._rate_delay(plain, 5) == 60.0
+
+
+@pytest.mark.asyncio
+async def test_translate_text_honors_pre_set_cooldown():
+    cooldown = CooldownGate()
+    await cooldown.trigger(0.10)
+    with respx.mock() as router:
+        router.get(GTX_ENDPOINT).mock(
+            return_value=httpx.Response(200, json=[[["ok", "ok", None, None]], "en", None, None])
+        )
+        translator = make_translator(cooldown=cooldown)
+        try:
+            start = time.monotonic()
+            result = await translator.translate_text("hola", target="es")
+            elapsed = time.monotonic() - start
+            assert result == "ok"
+            assert elapsed >= 0.08
+        finally:
+            await translator.aclose()
+
+
+@pytest.mark.asyncio
+async def test_429_triggers_cooldown_for_next_request():
+    cooldown = CooldownGate()
+    with respx.mock() as router:
+        route = router.get(GTX_ENDPOINT)
+        route.side_effect = [
+            httpx.Response(429, headers={"retry-after": "0.05"}),
+            httpx.Response(429, headers={"retry-after": "0.05"}),
+            httpx.Response(200, json=[[["ok", "ok", None, None]], "en", None, None]),
+        ]
+        first = make_translator(cooldown=cooldown, max_retries=1, backoff_base=0.0)
+        second = make_translator(cooldown=cooldown, max_retries=1, backoff_base=0.0)
+        try:
+            with pytest.raises(TranslateError):
+                await first.translate_text("hola", target="es")
+            start = time.monotonic()
+            result = await second.translate_text("mundo", target="es")
+            elapsed = time.monotonic() - start
+            assert result == "ok"
+            assert elapsed >= 0.03
+        finally:
+            await first.aclose()
+            await second.aclose()
 
 
 @pytest.mark.asyncio

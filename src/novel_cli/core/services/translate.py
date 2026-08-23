@@ -11,7 +11,12 @@ import httpx
 from novel_cli.core import config
 from novel_cli.core.models.novel import Chapter
 from novel_cli.core.models.state import Manifest
-from novel_cli.core.scraper.fetcher import Pacer, parse_retry_after
+from novel_cli.core.scraper.fetcher import (
+    CHROME_HEADERS,
+    CooldownGate,
+    Pacer,
+    parse_retry_after,
+)
 from novel_cli.core.services.download import format_chapter
 from novel_cli.core.utils.names import chapter_filename
 from novel_cli.core.utils.text import split_text_by_words
@@ -41,15 +46,22 @@ class GoogleFreeTranslator:
         *,
         client: httpx.AsyncClient | None = None,
         pacer: Pacer | None = None,
-        max_retries: int = config.RETRY_RATE_LIMIT,
-        backoff_base: float = config.RETRY_BACKOFF_BASE_SECONDS,
+        cooldown: CooldownGate | None = None,
+        max_retries: int = config.TRANSLATE_RETRY_RATE_LIMIT,
+        backoff_base: float = config.TRANSLATE_BACKOFF_BASE_SECONDS,
     ):
         self._owns_client = client is None
         self._client = client or httpx.AsyncClient(
             timeout=config.DEFAULT_HTTP_TIMEOUT_SECONDS,
-            headers={"User-Agent": "novel-cli/0.2"},
+            headers={
+                "User-Agent": CHROME_HEADERS["User-Agent"],
+                "Accept": CHROME_HEADERS["Accept"],
+                "Accept-Language": CHROME_HEADERS["Accept-Language"],
+                "Referer": "https://translate.google.com/",
+            },
         )
         self.pacer = pacer or Pacer(config.TRANSLATE_REQUEST_MIN_INTERVAL_MS)
+        self.cooldown = cooldown or CooldownGate()
         self.max_retries = max_retries
         self.backoff_base = backoff_base
 
@@ -60,6 +72,7 @@ class GoogleFreeTranslator:
             return text
         params = {"client": "gtx", "dt": "t", "sl": source, "tl": target, "q": text}
         for attempt in range(self.max_retries + 1):
+            await self.cooldown.wait()
             await self.pacer.acquire()
             try:
                 response = await self._client.get(GTX_ENDPOINT, params=params)
@@ -74,11 +87,14 @@ class GoogleFreeTranslator:
 
             if response.status_code in (429, 503):
                 delay = self._rate_delay(response, attempt)
+                await self.cooldown.trigger(delay)
                 if attempt < self.max_retries:
                     await asyncio.sleep(delay)
                     continue
                 raise TranslateError(
-                    f"rate limited ({response.status_code})", status_code=response.status_code
+                    f"rate limited ({response.status_code}); "
+                    "espera un poco y re-ejecuta (la cache conserva lo traducido)",
+                    status_code=response.status_code,
                 )
 
             if attempt < self.max_retries:
@@ -91,12 +107,15 @@ class GoogleFreeTranslator:
         raise TranslateError("unreachable")
 
     def _backoff(self, attempt: int) -> float:
-        return min(self.backoff_base * (2**attempt), config.RETRY_AFTER_MAX_SECONDS)
+        return min(
+            self.backoff_base * (2**attempt),
+            config.TRANSLATE_RETRY_AFTER_MAX_SECONDS,
+        )
 
     def _rate_delay(self, response: httpx.Response, attempt: int) -> float:
         retry_after = parse_retry_after(response.headers.get("retry-after"))
         if retry_after is not None:
-            return min(retry_after, config.RETRY_AFTER_MAX_SECONDS)
+            return min(retry_after, config.TRANSLATE_RETRY_AFTER_MAX_SECONDS)
         return self._backoff(attempt)
 
     async def aclose(self) -> None:

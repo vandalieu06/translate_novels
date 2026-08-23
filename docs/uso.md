@@ -103,10 +103,12 @@ output/
 
 - Backend por defecto: endpoint gratuito `translate.googleapis.com/translate_a/single` (`client=gtx`), sin clave ni token.
 - Traduce **párrafo a párrafo** con chunking (~400 palabras) y reensamblado 1:1, por lo que el EPUB traducido conserva la estructura del original.
-- Respeta pacing (~300 ms), retry con backoff y `Retry-After` ante 429/503. Si el endpoint te limita (429 persistente), saldrá con código 3; re-ejecuta más tarde para continuar con lo pendiente (la caché evita re-traducir lo hecho).
+- Respeta pacing (~1,5 s entre peticiones), retry con backoff (5 reintentos, base 5 s) y `Retry-After` (hasta 60 s) ante 429/503, con un cool-down compartido para toda la pasada de traducción. Si el endpoint te limita de forma persistente, saldrá con código 3; re-ejecuta más tarde para continuar (la caché evita re-traducir lo hecho).
+- El pacer es ajustable por env: `NOVEL_TRANSLATE_PACER_MS` (ms entre peticiones).
 
 ## Variables de entorno
 
 | Variable | Uso |
 |---|---|
 | `NOVEL_OUTPUT_DIR` | Directorio de salida por defecto (si no se pasa `-o`). |
+| `NOVEL_TRANSLATE_PACER_MS` | Milisegundos entre peticiones de traducción (default: 1500). |
