@@ -1,5 +1,7 @@
 # Uso de novel-cli
 
+> Documentos relacionados: [Arquitectura](arquitectura.md) · [Features](features.md)
+
 CLI para descargar web novels, convertirlas a EPUB y opcionalmente traducirlas a español (endpoint gratuito de Google Translate). Escrito en Python con `uv`, `httpx`, `ebooklib`, `typer` y `rich`.
 
 ## Instalación
