@@ -289,6 +289,40 @@ async def test_cache_skips_existing_translated(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_empty_chapters_skipped_by_translation(tmp_path):
+    """Los capitulos vacios no se traducen ni se marcan como traducidos."""
+    chapters = [
+        Chapter(num=1, title="Ch 1", url="u1", paragraphs=["Real content"]),
+        Chapter(num=2, title="Ch 2", url="u2", paragraphs=[]),
+    ]
+    received: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        received.append(request.url.params.get("q", ""))
+        return echo_handler(request)
+
+    with respx.mock() as router:
+        router.get(GTX_ENDPOINT).mock(side_effect=handler)
+        translator = make_translator()
+        manifest = make_manifest(tmp_path)
+        try:
+            await translate_chapters(
+                translator=translator,
+                chapters=chapters,
+                slug_dir=tmp_path,
+                manifest=manifest,
+            )
+        finally:
+            await translator.aclose()
+    # solo se tradujo el capitulo 1 (con contenido)
+    assert len(received) == 1
+    translated_dir = tmp_path / "translated"
+    assert translated_dir.joinpath(chapter_filename(1)).exists()
+    assert not translated_dir.joinpath(chapter_filename(2)).exists()
+    assert manifest.chapters_translated == 1
+
+
+@pytest.mark.asyncio
 async def test_force_retranslates_all(tmp_path):
     chapters = [Chapter(num=1, title="Ch 1", url="u1", paragraphs=["X"])]
     translated_dir = tmp_path / "translated"
@@ -411,3 +445,98 @@ def test_build_default_translator_libre(monkeypatch):
     translator = build_default_translator()
     assert isinstance(translator, LibreTranslateTranslator)
     assert translator.base_url == "http://127.0.0.1:5000"
+
+
+def test_translate_concurrency_default_smart(monkeypatch):
+    monkeypatch.setattr(config, "TRANSLATE_BACKEND", "libre")
+    monkeypatch.setattr(config, "TRANSLATE_CONCURRENCY", 0)
+    assert config.translate_concurrency_default() == config.LIBRE_TRANSLATE_CONCURRENCY
+
+    monkeypatch.setattr(config, "TRANSLATE_BACKEND", "google")
+    monkeypatch.setattr(config, "TRANSLATE_CONCURRENCY", 0)
+    assert config.translate_concurrency_default() == config.DEFAULT_TRANSLATE_CONCURRENCY
+
+    # env explicito gana al auto
+    monkeypatch.setattr(config, "TRANSLATE_CONCURRENCY", 8)
+    assert config.translate_concurrency_default() == 8
+
+
+def test_effective_translate_concurrency_protection(monkeypatch):
+    monkeypatch.setattr(config, "TRANSLATE_BACKEND", "google")
+    # google siempre fuerza a 1, ignore el pedido
+    assert config.effective_translate_concurrency(8) == 1
+    assert config.effective_translate_concurrency(None) == 1
+
+    monkeypatch.setattr(config, "TRANSLATE_BACKEND", "libre")
+    monkeypatch.setattr(config, "TRANSLATE_MAX_CONCURRENCY", 16)
+    assert config.effective_translate_concurrency(None) == config.LIBRE_TRANSLATE_CONCURRENCY
+    assert config.effective_translate_concurrency(8) == 8
+    # tope maximo
+    assert config.effective_translate_concurrency(99) == 16
+    assert config.effective_translate_concurrency(0) == config.LIBRE_TRANSLATE_CONCURRENCY
+
+
+@pytest.mark.asyncio
+async def test_translate_chapters_parallel(tmp_path):
+    """Con concurrency>1 todos los capitulos se traducen y el progreso es correcto."""
+    chapters = [
+        Chapter(num=i, title=f"Ch {i}", url=f"u{i}", paragraphs=["Hello world"])
+        for i in range(1, 11)
+    ]
+    translated_dir = tmp_path / "translated"
+    received: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        received.append(request.url.params.get("q", ""))
+        return echo_handler(request)
+
+    progress: list[tuple[int, int]] = []
+
+    with respx.mock() as router:
+        router.get(GTX_ENDPOINT).mock(side_effect=handler)
+        translator = make_translator()
+        manifest = make_manifest(tmp_path)
+        try:
+            await translate_chapters(
+                translator=translator,
+                chapters=chapters,
+                slug_dir=tmp_path,
+                manifest=manifest,
+                concurrency=4,
+                on_progress=lambda d, t: progress.append((d, t)),
+            )
+        finally:
+            await translator.aclose()
+
+    assert len(received) == 10
+    assert manifest.chapters_translated == 10
+    assert manifest.translated is True
+    # cada capitulo quedo en disco
+    assert translated_dir.joinpath(chapter_filename(5)).exists()
+    # progreso llego a 10/10
+    assert progress[-1] == (10, 10)
+    assert len(progress) == 10
+
+
+@pytest.mark.asyncio
+async def test_translate_chapters_concurrency_1_sequential(tmp_path):
+    """concurrency=1 mantiene el comportamiento secuencial (retrocompatible)."""
+    chapters = [
+        Chapter(num=i, title=f"Ch {i}", url=f"u{i}", paragraphs=["Hello world"])
+        for i in range(1, 4)
+    ]
+    with respx.mock() as router:
+        router.get(GTX_ENDPOINT).mock(side_effect=echo_handler)
+        translator = make_translator()
+        manifest = make_manifest(tmp_path)
+        try:
+            await translate_chapters(
+                translator=translator,
+                chapters=chapters,
+                slug_dir=tmp_path,
+                manifest=manifest,
+                concurrency=1,
+            )
+        finally:
+            await translator.aclose()
+    assert manifest.chapters_translated == 3

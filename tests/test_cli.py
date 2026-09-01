@@ -155,3 +155,25 @@ def test_no_args_requires_url():
     result = runner.invoke(app, [])
     assert result.exit_code == 2
     assert "Missing argument 'url'" in result.output
+
+
+def test_translate_concurrency_flag_passed(monkeypatch, tmp_path):
+    captured: dict[str, Any] = {}
+
+    async def fake(**kwargs: Any) -> Manifest:
+        captured.update(kwargs)
+        return Manifest(slug="novela", title="Novela")
+
+    monkeypatch.setattr(cli_app_module, "run_pipeline", fake)
+    result = runner.invoke(
+        app,
+        [NOVEL_URL, "-o", str(tmp_path), "--translate", "-tc", "8"],
+    )
+    assert result.exit_code == 0
+    assert captured["translate_concurrency"] == 8
+
+
+def test_translate_concurrency_zero_rejected_exit_1(monkeypatch, tmp_path):
+    result = runner.invoke(app, [NOVEL_URL, "-tc", "0"])
+    assert result.exit_code == 1
+    assert "translate-concurrency" in result.output

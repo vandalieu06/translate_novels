@@ -1,0 +1,152 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>novel-cli web</title>
+  <link
+    rel="icon"
+    href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%23fa6f78'/%3E%3Ctext x='16' y='22' font-family='Arial' font-size='16' font-weight='700' fill='%23fff' text-anchor='middle'%3EN%3C/text%3E%3C/svg%3E"
+  />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link
+    href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+JP:wght@200;400;500;700&display=swap"
+    rel="stylesheet"
+  />
+  <link rel="stylesheet" href="/static/css/app.css" />
+</head>
+<body>
+  <header class="site-header">
+    <div class="container">
+      <div class="brand">
+        <span class="logo">N</span>
+        novel<span>-cli</span>
+      </div>
+      <nav id="main-nav">
+        <a href="#descargar" class="active">Descargar</a>
+        <a href="#biblioteca">Biblioteca</a>
+      </nav>
+      <div class="spacer"></div>
+      <div class="server-status" id="server-status">
+        <span class="dot"></span><span id="server-status-text">Servidor OK</span>
+      </div>
+    </div>
+  </header>
+
+  <section class="hero">
+    <div class="container">
+      <div class="eyebrow">Tu biblioteca de novelas</div>
+      <h1>Descarga, traduce y exporta tus web novels.</h1>
+      <p class="lead">Controla novel-cli desde tu tablet o móvil, sin SSH. Lanza descargas, sigue el progreso en vivo y descarga los EPUB.</p>
+      <div class="stats">
+        <div class="stat"><div class="num" id="stat-novels">0</div><div class="label">novelas</div></div>
+        <div class="stat"><div class="num" id="stat-chapters">0</div><div class="label">capítulos</div></div>
+        <div class="stat"><div class="num" id="stat-translated">0</div><div class="label">traducidos</div></div>
+      </div>
+    </div>
+  </section>
+
+  <section class="section" id="descargar">
+    <div class="container">
+      <div class="section-header">
+        <div class="kicker">Descarga</div>
+        <h2>Nueva descarga</h2>
+        <p class="section-desc">Introduce la URL de la novela y lanza la descarga. El progreso se muestra en vivo.</p>
+      </div>
+
+      <form class="card job-form" id="job-form">
+        <div class="field url-field">
+          <label for="job-url">URL de la web novel</label>
+          <input type="url" id="job-url" placeholder="https://novelfire.net/..." required />
+        </div>
+        <div class="row-fields">
+          <div class="field">
+            <label for="job-volume">Capítulos por tomo</label>
+            <select id="job-volume">
+              <option value="50" selected>50</option>
+              <option value="100">100</option>
+            </select>
+          </div>
+          <div class="field">
+            <label for="job-concurrency">Concurrencia descarga</label>
+            <input type="number" id="job-concurrency" value="4" min="1" />
+          </div>
+          <div class="field" id="field-translate-concurrency" hidden>
+            <label for="job-translate-concurrency">Concurrencia traducción</label>
+            <input type="number" id="job-translate-concurrency" value="4" min="1" />
+          </div>
+        </div>
+        <div class="checkbox-group">
+          <label><input type="checkbox" id="job-translate" /> Traducir a español (ES)</label>
+          <label><input type="checkbox" id="job-all" /> Todos los capítulos</label>
+          <label><input type="checkbox" id="job-pending" /> Traducir pendientes</label>
+          <label><input type="checkbox" id="job-force" /> Forzar re-descarga</label>
+          <label><input type="checkbox" id="job-playwright" /> Forzar Playwright</label>
+        </div>
+        <div class="form-actions">
+          <button type="submit" class="btn btn-primary btn-lg" id="job-submit">
+            <span class="spinner"></span>
+            <span class="btn-label">Lanzar descarga</span>
+          </button>
+          <div class="job-current" id="job-current"></div>
+        </div>
+      </form>
+
+      <div class="job-progress card" id="job-progress">
+        <div class="job-head">
+          <span class="job-url" id="job-progress-url"></span>
+          <span class="badge badge-info" id="job-state-badge">en curso</span>
+        </div>
+        <div class="phases">
+          <div class="phase">
+            <span class="phase-icon">&#11015;</span>
+            <span class="phase-label">Descarga</span>
+            <div class="bar"><div class="bar-fill" id="bar-download"></div></div>
+            <span class="count" id="count-download">0/0</span>
+          </div>
+          <div class="phase">
+            <span class="phase-icon">&#127760;</span>
+            <span class="phase-label">Traducción</span>
+            <div class="bar"><div class="bar-fill" id="bar-translate"></div></div>
+            <span class="count" id="count-translate">0/0</span>
+          </div>
+          <div class="phase">
+            <span class="phase-icon">&#128196;</span>
+            <span class="phase-label">EPUB</span>
+            <div class="bar"><div class="bar-fill" id="bar-epub"></div></div>
+            <span class="count" id="count-epub">0/0</span>
+          </div>
+        </div>
+        <div class="status-line" id="status-line"></div>
+        <div class="cancel-row">
+          <button class="btn btn-secondary" id="cancel-btn">Cancelar</button>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="section" id="biblioteca">
+    <div class="container">
+      <div class="section-header">
+        <div class="kicker">Biblioteca</div>
+        <h2>Tus novelas</h2>
+        <p class="section-desc">Novelas ya descargadas, con progreso y enlaces para descargar los EPUB.</p>
+      </div>
+      <div class="novel-list" id="novel-list">
+        <div class="empty">Cargando...</div>
+      </div>
+    </div>
+  </section>
+
+  <footer class="site-footer">
+    <div class="container">
+      <span class="foot-brand">novel-cli web</span>
+      <span>FastAPI + UI responsive · diseño MOSH</span>
+    </div>
+  </footer>
+
+  <div id="toast"></div>
+  <script src="/static/js/app.js"></script>
+</body>
+</html>

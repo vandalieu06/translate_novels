@@ -17,7 +17,7 @@ from novel_cli.core.scraper.fetcher import (
     Pacer,
     parse_retry_after,
 )
-from novel_cli.core.services.download import format_chapter
+from novel_cli.core.services.download import format_chapter, is_chapter_empty
 from novel_cli.core.utils.names import chapter_filename
 from novel_cli.core.utils.text import split_text_by_words
 
@@ -291,28 +291,51 @@ async def translate_chapters(
     target: str = "es",
     max_words_per_chunk: int = config.DEFAULT_MAX_WORDS_PER_CHUNK,
     force: bool = False,
+    concurrency: int = 1,
     on_progress=None,
 ) -> list[Chapter]:
-    """Traduce capitulos no cacheados a translated/<NNNN>.md y actualiza manifest."""
+    """Traduce capitulos no cacheados a translated/<NNNN>.md y actualiza manifest.
+
+    ``concurrency`` paraleliza la traduccion de capitulos con un pool async
+    (patron identico a ``download_chapters``). El Pacer/CooldownGate compartidos
+    del translator siguen limitando el ritmo global de peticiones.
+    """
     translated_dir = slug_dir / "translated"
     translated_dir.mkdir(parents=True, exist_ok=True)
     existing_nums = {int(path.stem) for path in translated_dir.glob("*.md")}
     todo = [chapter for chapter in chapters if force or chapter.num not in existing_nums]
+    # Los capitulos vacios (sin contenido en raw) no se traducen ni se marcan.
+    todo = [chapter for chapter in todo if not is_chapter_empty(chapter.paragraphs)]
 
+    if not todo:
+        manifest.chapters_translated = len(existing_nums)
+        manifest.translated = True
+        manifest.save(slug_dir)
+        return []
+
+    semaphore = asyncio.Semaphore(max(1, concurrency))
     completed: list[Chapter] = []
-    total = len(todo)
     done = 0
-    for chapter in todo:
-        translated = await translate_chapter(
-            chapter, translator, target=target, max_words_per_chunk=max_words_per_chunk
-        )
-        translated_dir.joinpath(chapter_filename(chapter.num)).write_text(
-            format_chapter(translated, translated.paragraphs), encoding="utf-8"
-        )
+    total = len(todo)
+
+    async def work(chapter: Chapter) -> None:
+        nonlocal done
+        async with semaphore:
+            translated = await translate_chapter(
+                chapter,
+                translator,
+                target=target,
+                max_words_per_chunk=max_words_per_chunk,
+            )
+            translated_dir.joinpath(chapter_filename(chapter.num)).write_text(
+                format_chapter(translated, translated.paragraphs), encoding="utf-8"
+            )
         completed.append(translated)
         done += 1
         if on_progress:
             on_progress(done, total)
+
+    await asyncio.gather(*(work(chapter) for chapter in todo))
 
     translated_nums = {chapter.num for chapter in completed} | existing_nums
     manifest.chapters_translated = len(translated_nums)

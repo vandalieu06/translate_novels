@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from pathlib import Path
 
+from novel_cli.core import config
 from novel_cli.core.models.novel import Chapter, NovelMetadata
 from novel_cli.core.models.state import Manifest
 from novel_cli.core.scraper.base import Fetcher, SiteAdapter
@@ -13,6 +14,7 @@ from novel_cli.core.scraper.registry import get_adapter
 from novel_cli.core.services.download import (
     download_chapters,
     download_cover,
+    is_chapter_empty,
     load_chapter,
 )
 from novel_cli.core.services.epub import build_epub, generate_volumes, stable_identifier
@@ -45,6 +47,7 @@ async def run_pipeline(
     concurrency: int,
     download_all: bool = False,
     translate_pending: bool = False,
+    translate_concurrency: int = 1,
     fetcher: Fetcher,
     adapter: SiteAdapter | None = None,
     translator: Translator | None = None,
@@ -61,6 +64,7 @@ async def run_pipeline(
             output_dir=output_dir,
             resume=resume,
             force=force,
+            translate_concurrency=translate_concurrency,
             translator=translator,
             on_status=on_status,
             on_translate_progress=on_translate_progress,
@@ -113,6 +117,13 @@ async def run_pipeline(
         pacer=pacer,
         on_progress=on_download_progress,
     )
+    if manifest.chapters_empty and on_status:
+        nums = ", ".join(str(n) for n in manifest.chapters_empty_nums[:20])
+        extra = "..." if len(manifest.chapters_empty_nums) > 20 else ""
+        on_status(
+            f"AVISO: {manifest.chapters_empty} capitulo(s) vacio(s) pendientes "
+            f"de reintento: {nums}{extra}"
+        )
     manifest.chapters_total = manifest.chapters_downloaded
     loaded = _load_all_chapters(site.chapters, slug_dir / "raw")
     manifest.save(slug_dir)
@@ -145,6 +156,7 @@ async def run_pipeline(
             slug_dir=slug_dir,
             manifest=manifest,
             force=force,
+            concurrency=config.effective_translate_concurrency(translate_concurrency),
             on_progress=on_translate_progress,
         )
         translated = _load_all_chapters(loaded, slug_dir / "translated")
@@ -227,7 +239,11 @@ def _download_batch(
         return chapters
     if force:
         return chapters[:volume_size]
-    existing = {int(path.stem) for path in raw_dir.glob("*.md")}
+    existing = {
+        int(path.stem)
+        for path in raw_dir.glob("*.md")
+        if not is_chapter_empty(load_chapter(path, int(path.stem), "").paragraphs)
+    }
     pending = [chapter for chapter in chapters if chapter.num not in existing]
     return pending[:volume_size]
 
@@ -307,6 +323,7 @@ async def _run_translate_pending(
     output_dir: Path,
     resume: bool,
     force: bool,
+    translate_concurrency: int = 1,
     translator: Translator | None,
     on_status: StatusCallback | None,
     on_translate_progress: ProgressCallback | None,
@@ -328,6 +345,7 @@ async def _run_translate_pending(
         slug_dir=slug_dir,
         manifest=manifest,
         force=force,
+        concurrency=config.effective_translate_concurrency(translate_concurrency),
         on_progress=on_translate_progress,
     )
     translated = _load_all_from_disk(slug_dir / "translated")

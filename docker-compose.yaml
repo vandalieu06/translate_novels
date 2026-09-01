@@ -19,7 +19,7 @@ services:
       retries: 4
       start_period: 5s
     environment:
-      LT_LOAD_ONLY: "en,es,ja"   # modelos cargados (en/es/es→ja). Quita para todos los idiomas.
+      LT_LOAD_ONLY: "en,es"   # modelos cargados (en/es/es→ja). Quita para todos los idiomas.
     volumes:
       - libretranslate_models:/home/libretranslate/.local
 

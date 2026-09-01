@@ -24,6 +24,8 @@ class Manifest(BaseModel):
     chapters_total: int = 0
     chapters_downloaded: int = 0
     chapters_translated: int = 0
+    chapters_empty: int = 0
+    chapters_empty_nums: list[int] = []
     volume_size: int | None = None
     translated: bool = False
     epub_original: list[str] = []

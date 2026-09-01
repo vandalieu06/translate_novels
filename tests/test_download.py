@@ -16,6 +16,7 @@ from novel_cli.core.services.download import (
     DownloadError,
     download_chapters,
     format_chapter,
+    is_chapter_empty,
     load_chapter,
 )
 from novel_cli.core.utils.names import chapter_filename
@@ -322,4 +323,102 @@ async def test_download_with_respx_http_fetcher(tmp_path):
             )
         finally:
             await fetcher.aclose()
+    assert manifest.chapters_downloaded == 2
+
+
+def test_is_chapter_empty():
+    assert is_chapter_empty([])
+    assert is_chapter_empty([""])
+    assert is_chapter_empty(["   ", "\n"])
+    assert not is_chapter_empty(["text"])
+    assert not is_chapter_empty(["", "text"])
+
+
+@pytest.mark.asyncio
+async def test_empty_chapter_retried_and_resolved(tmp_path):
+    """Un capitulo vacio al primer fetch se reintenta y se resuelve."""
+    chapters = make_chapters(2)
+
+    class EmptyThenOkAdapter:
+        name = "fake"
+        calls: dict[str, int] = {}
+
+        def parse_chapter(self, html: str, chapter_url: str) -> list[str]:
+            self.calls[chapter_url] = self.calls.get(chapter_url, 0) + 1
+            if self.calls[chapter_url] == 1:
+                return []
+            return ["p1", "p2"]
+
+    adapter = EmptyThenOkAdapter()
+    manifest = make_manifest(tmp_path)
+    await download_chapters(
+        fetcher=FakeFetcher(),
+        adapter=adapter,
+        metadata=NovelMetadata(title="Novela"),
+        chapters=chapters,
+        slug_dir=tmp_path,
+        manifest=manifest,
+        pacer=Pacer(0),
+        empty_retries=2,
+    )
+    # el capitulo 1 quedo resuelto tras el reintento
+    content = (tmp_path / "raw" / chapter_filename(1)).read_text(encoding="utf-8")
+    assert "p1" in content
+    assert manifest.chapters_downloaded == 2
+    assert manifest.chapters_empty == 0
+
+
+@pytest.mark.asyncio
+async def test_still_empty_chapter_reported_not_downloaded(tmp_path):
+    """Un capitulo vacio persistente se reporta y no cuenta como descargado."""
+    chapters = make_chapters(2)
+
+    class AlwaysEmptyAdapter:
+        name = "fake"
+
+        def parse_chapter(self, html: str, chapter_url: str) -> list[str]:
+            return []
+
+    manifest = make_manifest(tmp_path)
+    await download_chapters(
+        fetcher=FakeFetcher(),
+        adapter=AlwaysEmptyAdapter(),
+        metadata=NovelMetadata(title="Novela"),
+        chapters=chapters,
+        slug_dir=tmp_path,
+        manifest=manifest,
+        pacer=Pacer(0),
+        empty_retries=1,
+    )
+    assert manifest.chapters_empty == 2
+    assert manifest.chapters_empty_nums == [1, 2]
+    assert manifest.chapters_downloaded == 0
+
+
+@pytest.mark.asyncio
+async def test_empty_existing_file_re_downloaded(tmp_path):
+    """Un archivo vacio en disco se vuelve a descargar (no cuenta como hecho)."""
+    chapters = make_chapters(2)
+    raw = tmp_path / "raw"
+    raw.mkdir()
+    raw.joinpath(chapter_filename(1)).write_text("# Chapter 1\n\n", encoding="utf-8")
+
+    fetcher = FakeFetcher()
+    manifest = make_manifest(tmp_path)
+    await download_chapters(
+        fetcher=fetcher,
+        adapter=FakeAdapter(),
+        metadata=NovelMetadata(title="Novela"),
+        chapters=chapters,
+        slug_dir=tmp_path,
+        manifest=manifest,
+        pacer=Pacer(0),
+    )
+    # el 1 vacio se volvio a descargar y ahora tiene contenido
+    assert set(fetcher.calls) == {
+        "https://example.com/chapter/1",
+        "https://example.com/chapter/2",
+    }
+    content = (raw / chapter_filename(1)).read_text(encoding="utf-8")
+    assert "p1" in content
     assert manifest.chapters_downloaded == 2
