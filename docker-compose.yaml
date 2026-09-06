@@ -20,6 +20,9 @@ services:
       start_period: 5s
     environment:
       LT_LOAD_ONLY: "en,es"   # modelos cargados (en/es/es→ja). Quita para todos los idiomas.
+      # Con API key LibreTranslate omite el rate-limit por defecto (200 req/día/IP),
+      # que rompería re-traducciones largas con 429. Debe coincidir con NOVEL_TRANSLATE_API_KEY.
+      LT_API_KEYS: "local"
     volumes:
       - libretranslate_models:/home/libretranslate/.local
 

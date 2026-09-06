@@ -1,0 +1,43 @@
+# LibreTranslate con aceleracion CUDA (GPU NVIDIA) para traducciones mas rapidas.
+#
+# Lanzar con:  sudo docker compose -f docker-compose.cuda.yaml up -d
+# Detener:     sudo docker compose -f docker-compose.cuda.yaml down
+#
+# Requisitos en el host:
+#   sudo pacman -S nvidia-container-toolkit
+#   sudo nvidia-ctk runtime configure --runtime=docker
+#   sudo systemctl restart docker
+#
+# OJO: comparte el puerto 5000 con el compose CPU (podman, docker-compose.yaml).
+# No pueden correr a la vez: deten el CPU antes de levantar este (y viceversa).
+#   podman compose down   # detener el CPU
+
+services:
+  libretranslate:
+    container_name: novel-cli-libretranslate-cuda
+    image: libretranslate/libretranslate:latest-cuda
+    ports:
+      - "5000:5000"
+    environment:
+      - LT_LOAD_ONLY=en,es       # modelos cargados (en/es). Quita para todos.
+      # Con API key LibreTranslate omite el rate-limit por defecto (200 req/dia/IP),
+      # que rompe re-traducciones largas con 429. Coincide con NOVEL_TRANSLATE_API_KEY del .env.
+      - LT_API_KEYS=local
+    # DNS explicito: el /etc/resolv.conf del host solo apunta al MagicDNS de Tailscale
+    # (100.100.100.100), inalcanzable desde el contenedor docker -> falla la descarga de
+    # modelos en el primer arranque (gaierror name resolution). Con DNS publico se evita.
+    dns:
+      - 8.8.8.8
+      - 1.1.1.1
+    volumes:
+      - libretranslate_cuda_models:/root/.local:rw   # persiste los modelos entre arranques
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+
+volumes:
+  libretranslate_cuda_models:
