@@ -1,6 +1,13 @@
 # AGENTS.md
 
-Python CLI (`novel_cli`) that scrapes web novels, builds EPUBs, and optionally translates to Spanish via Google's free endpoint. Spanish docs in `docs/` are authoritative (`arquitectura.md` = technical reference, `uso.md` = user guide); `specs/` is the original plan.
+Python CLI (`novel_cli`) that scrapes web novels, builds EPUBs, and optionally translates to Spanish (Google free endpoint or local LibreTranslate). Spanish docs in `docs/` are authoritative (`arquitectura.md` = technical reference, `uso.md` = user guide); `specs/` holds the **versioned plan** (`specs/0.1.0/` base, `specs/0.1.1/` current changes).
+
+## Specs-driven workflow (obligatorio)
+
+- **Planificar antes de codificar**: toda feature o fix nuevo se documenta primero en un spec de `specs/` (carpeta versionada) siguiendo el formato estándar (`NN-tema.md` con Propósito / Contexto / Cambio propuesto / Decisión técnica / Archivos afectados / Tests / Criterios de aceptación; ver `specs/0.1.1/00-changelog.md`).
+- **No se escribe código sin spec**: si llega una petición de cambio no documentada, el primer paso es redactar/actualizar su spec y confirmarlo con el usuario antes de implementar.
+- Los specs viven en `specs/<version>/`; los cambios nuevos se registran en la versión en curso (`00-changelog.md`) y al liberar un conjunto se bumpa la versión de specs.
+- Al terminar: marcar el spec como *implementado/aceptado*, actualizar `docs/` (`arquitectura.md`, `uso.md`, `features.md`) y anotar el commit en el changelog. `docs/` sigue siendo la referencia autoritativa del estado; `specs/` es el contrato/plan por versión.
 
 ## Commands
 
