@@ -47,6 +47,7 @@ def test_config_no_auth(monkeypatch, tmp_path):
     res = client.get("/api/config")
     assert res.status_code == 200
     assert res.json()["auth_required"] is False
+    assert res.json()["translate_backend"] in ("google", "libre")
 
 
 def test_config_auth_required(monkeypatch, tmp_path):
@@ -212,6 +213,53 @@ def test_sync_novel_creates_job(monkeypatch, tmp_path):
     assert captured["force"] is False
 
 
+def test_retranslate_novela_not_found(monkeypatch, tmp_path):
+    client = _client(monkeypatch, tmp_path)
+    assert client.post("/api/novels/inexistente/retranslate").status_code == 404
+
+
+def test_retranslate_missing_url(monkeypatch, tmp_path):
+    slug_dir = tmp_path / "novela"
+    slug_dir.mkdir()
+    Manifest(slug="novela", title="Novela", source_url="").save(slug_dir)
+    client = _client(monkeypatch, tmp_path)
+    assert client.post("/api/novels/novela/retranslate").status_code == 400
+
+
+def test_retranslate_creates_job(monkeypatch, tmp_path):
+    slug_dir = tmp_path / "novela"
+    slug_dir.mkdir()
+    Manifest(
+        slug="novela",
+        title="Novela",
+        source_url="https://example.com/novel",
+        translated=True,
+        volume_size=100,
+    ).save(slug_dir)
+
+    captured: dict[str, Any] = {}
+
+    async def fake(**kwargs: Any) -> Manifest:
+        captured.update(kwargs)
+        return Manifest(slug="novela", title="Novela")
+
+    monkeypatch.setattr("novel_cli.web.jobs.run_pipeline", fake)
+    client = TestClient(create_app(output_dir=tmp_path))
+
+    res = client.post("/api/novels/novela/retranslate")
+    assert res.status_code == 200
+    job_id = res.json()["job_id"]
+    assert job_id
+
+    job = client.get(f"/api/jobs/{job_id}").json()
+    assert job["url"] == "https://example.com/novel"
+    assert captured["translate"] is True
+    assert captured["translate_pending"] is True
+    assert captured["force"] is False
+    assert captured["volume_size"] == 100
+    assert captured["download_all"] is False
+
+
 def test_job_translate_concurrency_propagated(monkeypatch, tmp_path):
     captured: dict[str, Any] = {}
 
@@ -237,3 +285,73 @@ def test_job_translate_concurrency_zero_rejected(monkeypatch, tmp_path):
         json={"url": "https://example.com/novel", "translate_concurrency": 0},
     )
     assert res.status_code == 400
+
+
+def test_volume_size_not_found(monkeypatch, tmp_path):
+    client = _client(monkeypatch, tmp_path)
+    res = client.post(
+        "/api/novels/inexistente/volume-size", json={"volume_size": 100}
+    )
+    assert res.status_code == 404
+
+
+def test_volume_size_invalid_rejected(monkeypatch, tmp_path):
+    client = _client(monkeypatch, tmp_path)
+    slug_dir = tmp_path / "novela"
+    slug_dir.mkdir()
+    Manifest(slug="novela", title="Novela", volume_size=50).save(slug_dir)
+    res = client.post(
+        "/api/novels/novela/volume-size", json={"volume_size": 0}
+    )
+    assert res.status_code == 400
+
+
+def test_volume_size_rebuilds(monkeypatch, tmp_path):
+    client = _client(monkeypatch, tmp_path)
+    slug_dir = tmp_path / "novela"
+    slug_dir.mkdir()
+    Manifest(
+        slug="novela", title="Novela", source_url="https://example.com/novel",
+        volume_size=50, chapters_downloaded=3,
+    ).save(slug_dir)
+    raw = slug_dir / "raw"
+    raw.mkdir()
+    for i in range(1, 4):
+        raw.joinpath(f"{i:04d}.md").write_text(
+            f"# Chapter {i}\n\nContent {i}\n", encoding="utf-8"
+        )
+
+    res = client.post(
+        "/api/novels/novela/volume-size", json={"volume_size": 100}
+    )
+    assert res.status_code == 200
+    body = res.json()
+    assert body["ok"] is True
+    assert body["volume_size"] == 100
+    assert body["epub_original"] == ["Novela 1-3.epub"]
+
+    manifest = Manifest.load(slug_dir)
+    assert manifest is not None
+    assert manifest.volume_size == 100
+
+
+def test_volume_size_all_single(monkeypatch, tmp_path):
+    client = _client(monkeypatch, tmp_path)
+    slug_dir = tmp_path / "novela"
+    slug_dir.mkdir()
+    Manifest(
+        slug="novela", title="Novela", source_url="https://example.com/novel",
+        volume_size=50, chapters_downloaded=3,
+    ).save(slug_dir)
+    raw = slug_dir / "raw"
+    raw.mkdir()
+    for i in range(1, 4):
+        raw.joinpath(f"{i:04d}.md").write_text(
+            f"# Chapter {i}\n\nContent {i}\n", encoding="utf-8"
+        )
+
+    res = client.post(
+        "/api/novels/novela/volume-size", json={"volume_size": None}
+    )
+    assert res.status_code == 200
+    assert res.json()["volume_size"] is None

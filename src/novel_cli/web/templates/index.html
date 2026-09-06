@@ -28,6 +28,7 @@
         <a href="#biblioteca">Biblioteca</a>
       </nav>
       <div class="spacer"></div>
+      <span class="backend-pill" id="backend-pill" hidden></span>
       <div class="server-status" id="server-status">
         <span class="dot"></span><span id="server-status-text">Servidor OK</span>
       </div>
@@ -66,6 +67,8 @@
             <select id="job-volume">
               <option value="50" selected>50</option>
               <option value="100">100</option>
+              <option value="150">150</option>
+              <option value="200">200</option>
             </select>
           </div>
           <div class="field">
@@ -145,6 +148,28 @@
       <span>FastAPI + UI responsive · diseño MOSH</span>
     </div>
   </footer>
+
+  <div class="modal-overlay" id="volume-modal" hidden>
+    <div class="modal" role="dialog" aria-modal="true" aria-labelledby="volume-modal-title">
+      <div class="modal-head">
+        <h3 id="volume-modal-title">Tamaño de tomo</h3>
+        <span class="modal-title-sub" id="volume-modal-novel"></span>
+        <button type="button" class="modal-close" id="volume-modal-close" aria-label="Cerrar">&times;</button>
+      </div>
+      <p class="modal-desc">Elige cuántos capítulos por tomo. Los EPUBs (original y traducido) se reconstruyen con el nuevo tamaño.</p>
+      <div class="pill-group" id="volume-pills">
+        <button type="button" class="pill" data-size="50">50</button>
+        <button type="button" class="pill" data-size="100">100</button>
+        <button type="button" class="pill" data-size="150">150</button>
+        <button type="button" class="pill" data-size="200">200</button>
+        <button type="button" class="pill" data-size="null">ALL</button>
+      </div>
+      <div class="modal-actions">
+        <button type="button" class="btn btn-secondary" id="volume-modal-cancel">Cancelar</button>
+        <button type="button" class="btn btn-primary" id="volume-modal-apply" disabled>Regenerar</button>
+      </div>
+    </div>
+  </div>
 
   <div id="toast"></div>
   <script src="/static/js/app.js"></script>

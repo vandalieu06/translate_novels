@@ -60,6 +60,15 @@ async function loadConfig() {
   if (state.config.auth_required && !state.token) {
     promptToken();
   }
+  renderBackend();
+}
+
+function renderBackend() {
+  const pill = $("#backend-pill");
+  if (!pill) return;
+  const backend = state.config.translate_backend;
+  pill.textContent = backend === "libre" ? "Traducción: LibreTranslate" : "Traducción: Google";
+  pill.hidden = false;
 }
 
 /* ---------- Job form ---------- */
@@ -153,6 +162,89 @@ async function syncNovel(btn) {
   } catch (e) {
     showToast(e.message, "error");
     setSyncLoading(btn, false);
+  }
+}
+
+async function retranslateNovel(btn) {
+  if (await hasActiveJob()) {
+    showToast("Ya hay un job en curso. Espera a que termine.", "info");
+    return;
+  }
+  const slug = btn.dataset.slug;
+  const title = btn.dataset.title;
+  setRetranslateLoading(btn, true);
+  try {
+    const { job_id } = await api(`/api/novels/${slug}/retranslate`, { method: "POST" });
+    state.currentJobId = job_id;
+    showProgressPanel(title);
+    resetProgress();
+    connectSocket(job_id);
+    startPolling();
+    showToast(`Re-traduciendo: ${title}`, "info");
+  } catch (e) {
+    showToast(e.message, "error");
+    setRetranslateLoading(btn, false);
+  }
+}
+
+function setRetranslateLoading(btn, loading) {
+  btn.disabled = loading;
+  btn.classList.toggle("loading", loading);
+  const label = btn.querySelector(".retranslate-label");
+  if (label) label.textContent = loading ? "Re-traduciendo..." : "Re-traducir";
+}
+
+/* ---------- Modal de tamaño de tomo ---------- */
+let volumeState = { slug: null, size: null };
+
+function openVolumeModal(slug, title, currentSize) {
+  volumeState = { slug, size: null };
+  $("#volume-modal-novel").textContent = title;
+  const applyBtn = $("#volume-modal-apply");
+  applyBtn.disabled = true;
+  const pills = document.querySelectorAll("#volume-pills .pill");
+  pills.forEach((pill) => {
+    const pillSize = pill.dataset.size;
+    const active = currentSize == null
+      ? pillSize === "null"
+      : pillSize === String(currentSize);
+    pill.classList.toggle("active", active);
+  });
+  $("#volume-modal").hidden = false;
+}
+
+function closeVolumeModal() {
+  $("#volume-modal").hidden = true;
+}
+
+function selectVolumePill(pill) {
+  document.querySelectorAll("#volume-pills .pill").forEach((p) => p.classList.remove("active"));
+  pill.classList.add("active");
+  volumeState.size = pill.dataset.size === "null" ? null : parseInt(pill.dataset.size, 10);
+  $("#volume-modal-apply").disabled = false;
+}
+
+async function applyVolumeSize() {
+  if (volumeState.size == null && volumeState.slug === null) return;
+  const btn = $("#volume-modal-apply");
+  btn.disabled = true;
+  btn.classList.add("loading");
+  const label = btn.querySelector(".btn-label");
+  if (label) label.textContent = "Regenerando...";
+  try {
+    await api(`/api/novels/${volumeState.slug}/volume-size`, {
+      method: "POST",
+      body: { volume_size: volumeState.size },
+    });
+    closeVolumeModal();
+    showToast("EPUBs regenerados", "success");
+    refreshNovels();
+  } catch (e) {
+    showToast(e.message, "error");
+    btn.disabled = false;
+  } finally {
+    btn.classList.remove("loading");
+    if (label) label.textContent = "Regenerar";
   }
 }
 
@@ -345,6 +437,16 @@ function renderNovels(novels) {
                 <span class="sync-icon">&#8635;</span>
                 <span class="sync-label">Sync</span>
               </button>
+              ${n.translated
+                ? `<button class="btn btn-secondary btn-retranslate" data-slug="${encodeURIComponent(n.slug)}" data-title="${escapeHtml(n.title)}">
+                     <span class="retranslate-icon">&#128221;</span>
+                     <span class="retranslate-label">Re-traducir</span>
+                   </button>`
+                : ""}
+              <button class="btn btn-secondary btn-volumes" data-slug="${encodeURIComponent(n.slug)}" data-title="${escapeHtml(n.title)}" data-size="${n.volume_size == null ? "ALL" : n.volume_size}">
+                <span class="volumes-icon">&#128196;</span>
+                <span class="volumes-label">Tomos ${n.volume_size == null ? "ALL" : n.volume_size}</span>
+              </button>
               <div class="epub-links">${epubLinks}</div>
             </div>
           </div>
@@ -411,8 +513,30 @@ document.addEventListener("DOMContentLoaded", async () => {
   $("#cancel-btn").addEventListener("click", cancelJob);
   $("#cancel-btn").style.display = "none";
   $("#novel-list").addEventListener("click", (event) => {
-    const btn = event.target.closest(".btn-sync");
-    if (btn) syncNovel(btn);
+    const syncBtn = event.target.closest(".btn-sync");
+    if (syncBtn) syncNovel(syncBtn);
+    const retranslateBtn = event.target.closest(".btn-retranslate");
+    if (retranslateBtn) retranslateNovel(retranslateBtn);
+    const volumesBtn = event.target.closest(".btn-volumes");
+    if (volumesBtn) {
+      openVolumeModal(
+        volumesBtn.dataset.slug,
+        volumesBtn.dataset.title,
+        volumesBtn.dataset.size === "ALL" ? null : parseInt(volumesBtn.dataset.size, 10),
+      );
+    }
+  });
+  $("#volume-modal-close").addEventListener("click", closeVolumeModal);
+  $("#volume-modal-cancel").addEventListener("click", closeVolumeModal);
+  $("#volume-modal-apply").addEventListener("click", applyVolumeSize);
+  $("#volume-modal").addEventListener("click", (event) => {
+    if (event.target.id === "volume-modal") closeVolumeModal();
+  });
+  document.querySelectorAll("#volume-pills .pill").forEach((pill) => {
+    pill.addEventListener("click", () => selectVolumePill(pill));
+  });
+  document.addEventListener("keydown", (event) => {
+    if (event.key === "Escape") closeVolumeModal();
   });
   setupTranslateField();
   setupScrollspy();

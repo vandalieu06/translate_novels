@@ -10,6 +10,7 @@ from pydantic import BaseModel
 
 from novel_cli.core import config
 from novel_cli.core.models.state import Manifest
+from novel_cli.core.services.pipeline import PipelineError, rebuild_volumes
 from novel_cli.web.jobs import JobManager
 
 
@@ -25,6 +26,10 @@ class JobRequest(BaseModel):
     translate_concurrency: int | None = None
     playwright: bool = False
     concurrency: int = config.DEFAULT_CONCURRENCY
+
+
+class VolumeSizeRequest(BaseModel):
+    volume_size: int | None = None
 
 
 def _valid_url(url: str) -> bool:
@@ -54,8 +59,10 @@ def build_router(manager: JobManager) -> APIRouter:
     async def create_job(req: JobRequest) -> dict[str, str]:
         if not _valid_url(req.url):
             raise HTTPException(status_code=400, detail="URL invalida: debe ser http(s)")
-        if req.volume_size is not None and req.volume_size not in (50, 100):
-            raise HTTPException(status_code=400, detail="volume_size solo acepta 50 o 100")
+        if req.volume_size is not None and req.volume_size not in (50, 100, 150, 200):
+            raise HTTPException(
+                status_code=400, detail="volume_size solo acepta 50, 100, 150 o 200"
+            )
         if req.concurrency < 1:
             raise HTTPException(status_code=400, detail="concurrency debe ser >= 1")
         if req.translate_concurrency is not None and req.translate_concurrency < 1:
@@ -139,6 +146,55 @@ def build_router(manager: JobManager) -> APIRouter:
         if not path.is_file():
             raise HTTPException(status_code=404, detail="portada no encontrada")
         return FileResponse(path)
+
+    @router.post("/novels/{slug}/retranslate")
+    async def retranslate_novel(slug: str) -> dict[str, str]:
+        output_dir = manager.default_output_dir
+        slug_dir = output_dir / slug
+        manifest = Manifest.load(slug_dir)
+        if manifest is None:
+            raise HTTPException(status_code=404, detail="novela no encontrada")
+        if not manifest.source_url or not _valid_url(manifest.source_url):
+            raise HTTPException(
+                status_code=400, detail="la novela no tiene una source_url valida"
+            )
+        job = manager.create(
+            url=manifest.source_url,
+            output_dir=output_dir,
+            options={
+                "url": manifest.source_url,
+                "volume_size": manifest.volume_size,
+                "translate": True,
+                "resume": True,
+                "force": False,
+                "all": False,
+                "translate_pending": True,
+                "playwright": False,
+                "concurrency": config.DEFAULT_CONCURRENCY,
+            },
+        )
+        return {"job_id": job.id}
+
+    @router.post("/novels/{slug}/volume-size")
+    async def change_volume_size(
+        slug: str, req: VolumeSizeRequest
+    ) -> dict[str, object]:
+        output_dir = manager.default_output_dir
+        slug_dir = output_dir / slug
+        if req.volume_size is not None and req.volume_size < 1:
+            raise HTTPException(
+                status_code=400, detail="volume_size debe ser >= 1"
+            )
+        try:
+            manifest = rebuild_volumes(slug_dir, req.volume_size)
+        except PipelineError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        return {
+            "ok": True,
+            "volume_size": manifest.volume_size,
+            "epub_original": manifest.epub_original,
+            "epub_translated": manifest.epub_translated,
+        }
 
     @router.post("/novels/{slug}/sync")
     async def sync_novel(slug: str) -> dict[str, str]:

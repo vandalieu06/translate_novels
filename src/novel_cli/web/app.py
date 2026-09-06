@@ -60,6 +60,7 @@ def create_app(*, output_dir: Path | None = None) -> FastAPI:
             "auth_required": _token() is not None,
             "default_volume_size": config.DEFAULT_VOLUME_SIZE,
             "default_concurrency": config.DEFAULT_CONCURRENCY,
+            "translate_backend": config.TRANSLATE_BACKEND,
         }
 
     return app
