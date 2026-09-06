@@ -144,6 +144,8 @@ DEFAULT_MAX_WORDS_PER_CHUNK = 400
 EMPTY_RETRIES = 3                        # reintentos de capítulos vacíos (backoff EMPTY_RETRY_BACKOFF)
 ```
 
+Al importar el módulo, `_load_dotenv()` carga un `.env` del directorio de trabajo (o `NOVEL_CLI_ENV_FILE`) en `os.environ` **sin sobrescribir** variables ya exportadas; después se leen todas las constantes. Así la config (p. ej. `NOVEL_TRANSLATE_BACKEND=libre`) puede vivir en un `.env` sin exportar nada al arrancar el CLI o `novel-cli web`.
+
 ### 5.3 Scraper (`core/scraper/`)
 
 Protocolos (`base.py`):
@@ -192,11 +194,17 @@ Adaptadores (`sites/`):
 - `stable_identifier(source_url)` — hash SHA-1 de la URL → `urn:novel-cli:<hash>` (re-imports deterministas).
 - `generate_volumes(chapters, volume_size)` — divide en `Volume(start, end, chapters)`; el último tomo puede ser corto; `None` → un solo volumen.
 
+En el pipeline (`pipeline.py`), `_generate_epubs` acepta `rebuild` (default `False`): con `rebuild=True` **reescribe los EPUB existentes aunque haya `resume`** (lo usan las vías de traducción, para que los EPUB `(ES)` reflejen siempre las traducciones actuales). Tras generar, `_cleanup_orphan_epubs` **borra del disco los `*.epub` que ya no están en `epub_original`+`epub_translated`** (restos de generaciones anteriores). Las vías de solo-traducción refrescan además `chapters_empty` desde el disco (`refresh_empty_counts`).
+
+`_build_epub_chapters(reference, chapter_dir, placeholder)` construye la lista de capítulos de un EPUB **del mismo tamaño/orden que la lista raw de referencia**: los archivos existentes se cargan (y si quedaron vacíos se sustituyen por el placeholder), y los que faltan (capítulos sin traducir) se crean con el placeholder. Así los tomos del EPUB traducido **se alinean** con los del original y no hay páginas en blanco (`EMPTY_PLACEHOLDER_EN`/`EMPTY_PLACEHOLDER_ES`).
+
+`rebuild_volumes(slug_dir, volume_size)` reconstruye los EPUBs con un nuevo tamaño de tomo **sin red** (desde el disco): valida el tamaño (`None` = un único EPUB/ALL, o `>= 1`), actualiza `manifest.volume_size`, regenera original y traducido con `rebuild=True`, limpia huérfanos y refresca `chapters_empty`. Es la base del endpoint `POST /api/novels/{slug}/volume-size`.
+
 ### 5.6 Traducción (`core/services/translate.py`)
 
 - `GoogleFreeTranslator` — `GET translate.googleapis.com/translate_a/single?client=gtx&dt=t&sl=auto&tl=es&q=<texto>`; concatena los `segment[0]` de `data[0]`. Retry/pacing propios (pacer 1500 ms por defecto, backoff ante 429/5xx honrando `Retry-After`).
 - `translate_paragraphs()` — traduce párrafo a párrafo con chunking (`split_text_by_words`, ~400 palabras) y **reensamblado 1:1** (los párrafos vacíos no llaman al endpoint).
-- `translate_chapters(...)` — caché en `translated/<NNNN>.md`; solo traduce lo que falta; actualiza `manifest.chapters_translated`. **Paraleliza capítulos** con `concurrency` (patrón `asyncio.Semaphore` + `gather`, igual que la descarga); el `Pacer`/`CooldownGate` compartidos limitan el ritmo global de peticiones incluso en paralelo. Los capítulos **vacíos** (sin contenido en `raw/`) no se traducen ni se marcan como traducidos.
+- `translate_chapters(...)` — caché en `translated/<NNNN>.md`; solo traduce lo que falta; actualiza `manifest.chapters_translated`. **Paraleliza capítulos** con `concurrency` (patrón `asyncio.Semaphore` + `gather`, igual que la descarga); el `Pacer`/`CooldownGate` compartidos limitan el ritmo global de peticiones incluso en paralelo. Los capítulos **vacíos** (sin contenido en `raw/`) no se traducen ni se marcan como traducidos; un `translated/<NNNN>.md` **vacío** (heredado de cuando el raw estaba vacío) **no cuenta como ya traducido** — si el raw tiene contenido se re-traduce, y si el raw sigue vacío se limpia (para que el EPUB traducido no incluya capítulos en blanco).
 - `OllamaTranslator` — stub opcional (no es el backend por defecto).
 
 Concurrencia y protección (`core/config.py`): `translate_concurrency_default()` devuelve **1** para `google` y **4** para `libre` (o `NOVEL_TRANSLATE_CONCURRENCY` si se define). `effective_translate_concurrency(requested)` es la capa de protección: **fuerza 1** si el backend es `google` (evita rate-limit) y limita a `TRANSLATE_MAX_CONCURRENCY` (16) para `libre`. El pacer default es 1500 ms (google) / 250 ms (libre), sobrescribible por `NOVEL_TRANSLATE_PACER_MS`. Ambos se aplican en `run_pipeline` (y en `--translate-pending`).
@@ -221,7 +229,7 @@ Concurrencia y protección (`core/config.py`): `translate_concurrency_default()`
 Capa de presentación web (FastAPI + Uvicorn) que reutiliza `core` tal cual. `web/` no contiene lógica de dominio:
 
 - `jobs.py` — **JobManager**: cada job lanza `run_pipeline` como `asyncio.create_task` dentro del event loop de Uvicorn (un job activo a la vez). Construye su propio fetcher/translator por ejecución y los cierra en `finally`. Los callbacks `on_status`/`on_progress` del pipeline publican **eventos** (`{type, phase, done, total, message}`) a un buffer + suscriptores.
-- `routes.py` — API REST: `GET /api/jobs` (lista de jobs con su `state`, para que la UI detecte un job activo), `POST /api/jobs` (valida como el CLI), `GET /api/jobs/{id}`, `POST /api/jobs/{id}/cancel`, `GET /api/novels`, `GET /api/novels/{slug}`, `GET /api/novels/{slug}/epub/{file}`, `GET /api/novels/{slug}/cover`, `POST /api/novels/{slug}/sync`, `GET /api/config`.
+- `routes.py` — API REST: `GET /api/jobs` (lista de jobs con su `state`, para que la UI detecte un job activo), `POST /api/jobs` (valida como el CLI), `GET /api/jobs/{id}`, `POST /api/jobs/{id}/cancel`, `GET /api/novels`, `GET /api/novels/{slug}`, `GET /api/novels/{slug}/epub/{file}`, `GET /api/novels/{slug}/cover`, `POST /api/novels/{slug}/sync`, `POST /api/novels/{slug}/retranslate` (solo-traducción de pendientes con opciones del manifest), `POST /api/novels/{slug}/volume-size` (cambia el tamaño de tomo y reconstruye los EPUBs desde el disco), `GET /api/config` (incluye `translate_backend` para que la UI muestre el motor de traducción activo).
 - `ws.py` — WebSocket `/api/jobs/{id}/ws`: reenvía los eventos del job al cliente (reusa el mismo mecanismo de callbacks que `rich`).
 - `app.py` — `create_app(output_dir)` monta static/templates y aplica auth opcional por token (`NOVEL_WEB_TOKEN`, cabecera `X-Auth-Token`). `main()` arranca Uvicorn (`--host`/`--port`/`--no-browser`).
 - `templates/index.html` + `static/` — SPA responsive sin build (CSS con tokens de `DESIGN.md` + JS vanilla), sirve la UI: formulario de descarga, progreso por WebSocket y biblioteca con descarga de EPUBs.

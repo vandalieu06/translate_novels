@@ -91,6 +91,8 @@ output/
 - Con `--force` se re-descarga y re-traduce todo desde cero.
 - Con `--no-resume` no se consulta el manifest, pero la existencia de archivos sigue evitando re-descargas.
 - **Capítulos vacíos**: si el parser devuelve 0 párrafos para un capítulo (página sin contenido parseable), se **reintenta** al final del lote. Si persiste, queda en "pendientes de reintento": se muestra un **aviso** (`AVISO: N capítulo(s) vacío(s) pendientes de reintento`) en el CLI y en la web, y el capítulo **no** cuenta como descargado. Un archivo vacío no cuenta como "ya descargado", así que re-ejecutar el mismo comando lo reintenta automáticamente.
+- En los **EPUBs**, un capítulo sin contenido (raw vacío o sin traducción) no sale en blanco: lleva un **aviso** (`(Chapter content not available…)` en el original, `(Capítulo sin contenido disponible…)` en el traducido). Los tomos del EPUB traducido se **alinean** con los del original aunque falten capítulos.
+- Al re-traducir (`--translate-pending` o con `-t`): si un capítulo estaba vacío y luego se arregló su raw, se **re-traduce** desde el raw corregido (un `translated/` vacío no cuenta como ya traducido). Si el raw sigue vacío, el `translated/` vacío heredado se **limpia** para que el EPUB traducido no incluya capítulos en blanco.
 
 ## Códigos de salida
 
@@ -126,8 +128,34 @@ curl -X POST localhost:5000/translate -H 'Content-Type: application/json' \
 NOVEL_TRANSLATE_BACKEND=libre uv run novel-cli -t <url> -tc 8
 ```
 
+> **Rate-limit**: LibreTranslate limita por defecto a ~200 peticiones/día/IP, lo que **rompe re-traducciones largas con 429** (el job falla a mitad). El `docker-compose.yaml` ya define `LT_API_KEYS=local` (con API key se omite el límite); el `.env` lleva `NOVEL_TRANSLATE_API_KEY=local` para que el CLI y la web la envíen. Si recreas el contenedor, asegúrate de que ambas claves coincidan. Recuerda **reiniciar `novel-cli web`** tras cambiar el `.env`.
+```
+
+**Acelerar con CUDA (GPU NVIDIA)**: si tienes una GPU NVIDIA, el contenedor `latest-cuda` traduce mucho más rápido. Usa `docker-compose.cuda.yaml` (se lanza con **`sudo docker compose`**):
+
+```bash
+# 1. Instalar el NVIDIA Container Toolkit (solo la primera vez, requiere sudo)
+sudo pacman -S nvidia-container-toolkit
+sudo nvidia-ctk runtime configure --runtime=docker
+sudo systemctl restart docker
+
+# 2. Detener el contenedor CPU (comparte el puerto 5000, no pueden estar a la vez)
+podman compose down
+
+# 3. Lanzar el CUDA
+sudo docker compose -f docker-compose.cuda.yaml up -d
+```
+
+El `.env` no cambia (mismo puerto `5000`, misma key `local`). Para volver al CPU: `sudo docker compose -f docker-compose.cuda.yaml down` y `podman compose up -d`. El `docker-compose.cuda.yaml` persiste los modelos en un volumen propio (`libretranslate_cuda_models`).
+
 - El `compose.yaml` del repo expone el puerto solo en `127.0.0.1` y guarda los modelos en un volumen con nombre.
 - Configuración vía env: `NOVEL_TRANSLATE_BACKEND` (`google`|`libre`), `NOVEL_TRANSLATE_URL` (default `http://localhost:5000`) y `NOVEL_TRANSLATE_API_KEY` (opcional).
+- **Configuración persistente con `.env`**: novel-cli carga un `.env` del directorio de trabajo (o el de `NOVEL_CLI_ENV_FILE`) al arrancar, sin sobrescribir variables ya exportadas. Crea un `.env` en la raíz (ya está en `.gitignore`) con:
+  ```
+  NOVEL_TRANSLATE_BACKEND=libre
+  NOVEL_TRANSLATE_URL=http://127.0.0.1:5000
+  ```
+  Así `novel-cli web` y el CLI quedan apuntando a LibreTranslate sin exportar nada en cada arranque. La web muestra el motor activo ("Traducción: LibreTranslate") junto al estado del servidor.
 
 #### Concurrencia de traducción: defaults y protección
 
@@ -160,6 +188,7 @@ Busca el manifest previo por `source_url`, traduce los capítulos que falten en 
 | `NOVEL_TRANSLATE_BACKEND` | Backend de traducción: `google` (default) o `libre`. |
 | `NOVEL_TRANSLATE_URL` | Base URL de LibreTranslate (default: `http://localhost:5000`). |
 | `NOVEL_TRANSLATE_API_KEY` | API key opcional para LibreTranslate. |
+| `NOVEL_CLI_ENV_FILE` | Ruta al `.env` a cargar al arrancar (default: `.env` del directorio de trabajo). |
 | `NOVEL_WEB_TOKEN` | Si está definida, la web exige este token para las llamadas a la API (cabecera `X-Auth-Token`). Recomendado si expones la web fuera de tu LAN. |
 | `NOVEL_WEB_HOST` / `NOVEL_WEB_PORT` | Valores por defecto de `--host` / `--port` (default: `0.0.0.0` / `8000`). |
 
@@ -185,6 +214,8 @@ Desde la tablet/móvil abre `http://<ip-del-pc>:8000/` en el navegador (ambos en
 - **Lanzar descarga**: URL, tomo (`50`/`100`), concurrencia y opciones (`--translate`, `--all`, `--translate-pending`, `--force`, `--playwright`), igual que el CLI.
 - **Progreso en vivo** por WebSocket: fases de descarga, traducción y EPUB con barras y contadores.
 - **Sincronizar novela** (botón **↻ Sync** en cada tarjeta): obtiene nuevos capítulos de una novela ya descargada **sin re-pegar la URL**. El sync reusa la `source_url` guardada y el mismo mecanismo de la CLI (misma URL + `--resume` → descarga el siguiente tomo pendiente), y **hereda la traducción y el tamaño de tomo** de la novela: si la novela se descargó traducida, los nuevos capítulos también se traducen y se regenera el EPUB `(ES)`.
+- **Re-traducir** (botón **📝 Re-traducir** en cada tarjeta, solo en novelas ya traducidas): lanza un job de **solo traducción** (sin descargar ni tocar el TOC) que **traduce los capítulos pendientes** — faltantes y `translated/` vacíos corregidos — usando las opciones del manifest (`volume_size`, etc.). No sobrescribe lo ya traducido; si no hay pendientes no cambia nada. **Regenera siempre los EPUB `(ES)`** con las traducciones actuales y **limpia del disco los EPUBs huérfanos** (los que ya no están referenciados en el manifest, p. ej. tomos con rangos viejos).
+- **Cambiar tamaño de tomo** (botón **📄 Tomos N** en cada tarjeta): abre un modal con píldoras **50 · 100 · 150 · 200 · ALL** (marca el tamaño actual). Al elegir uno se habilita **Regenerar**, que reconstruye los EPUBs (original y traducido) con el nuevo tamaño sin descargar ni traducir; **ALL** genera un único EPUB. El tamaño se guarda en el manifest y lo heredan los próximos **Sync**/**Re-traducir**. El formulario de descarga acepta ahora 50/100/150/200.
 - **Biblioteca**: lista las novelas ya descargadas (`output/<slug>/`) con portada, % de progreso, nº de volúmenes y botones para **descargar los EPUB** (original y traducido) directamente al dispositivo.
 - **Cancelar** un job en curso.
 - **Un job activo a la vez**: al lanzar un job nuevo, la UI consulta `GET /api/jobs` en el servidor y bloquea "Lanzar descarga"/"Sync" mientras exista un job en estado `pending` o `running`. Al terminar (listo/error/cancelado) se puede lanzar otro inmediatamente.
