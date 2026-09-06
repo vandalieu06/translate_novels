@@ -16,6 +16,7 @@ from novel_cli.core.services.download import (
     download_cover,
     is_chapter_empty,
     load_chapter,
+    refresh_empty_counts,
 )
 from novel_cli.core.services.epub import build_epub, generate_volumes, stable_identifier
 from novel_cli.core.services.toc import fetch_site_metadata
@@ -30,6 +31,9 @@ from novel_cli.core.utils.names import (
 
 StatusCallback = Callable[[str], None]
 ProgressCallback = Callable[[int, int], None]
+
+EMPTY_PLACEHOLDER_EN = "(Chapter content not available - retry later.)"
+EMPTY_PLACEHOLDER_ES = "(Capitulo sin contenido disponible - reintenta mas tarde.)"
 
 
 class PipelineError(Exception):
@@ -134,7 +138,9 @@ async def run_pipeline(
         slug_dir=slug_dir,
         manifest=manifest,
         metadata=metadata,
-        chapters=loaded,
+        chapters=_build_epub_chapters(
+            loaded, slug_dir / "raw", EMPTY_PLACEHOLDER_EN
+        ),
         volume_size=volume_size,
         language=_epub_language(metadata.language_code),
         translated=False,
@@ -159,7 +165,9 @@ async def run_pipeline(
             concurrency=config.effective_translate_concurrency(translate_concurrency),
             on_progress=on_translate_progress,
         )
-        translated = _load_all_chapters(loaded, slug_dir / "translated")
+        translated = _build_epub_chapters(
+            loaded, slug_dir / "translated", EMPTY_PLACEHOLDER_ES
+        )
         if on_status:
             on_status("Generando EPUB traducido")
         es_names = _generate_epubs(
@@ -172,12 +180,19 @@ async def run_pipeline(
             translated=True,
             resume=resume,
             force=force,
+            rebuild=True,
             on_progress=on_epub_progress,
         )
         manifest.epub_translated = es_names
         manifest.translated = True
+        refresh_empty_counts(slug_dir / "raw", manifest)
         manifest.save(slug_dir)
 
+    _cleanup_orphan_epubs(
+        slug_dir,
+        keep=manifest.epub_original + manifest.epub_translated,
+    )
+    manifest.save(slug_dir)
     return manifest
 
 
@@ -192,6 +207,7 @@ def _generate_epubs(
     translated: bool,
     resume: bool,
     force: bool,
+    rebuild: bool = False,
     on_progress: ProgressCallback | None,
 ) -> list[str]:
     base = title_to_filename(metadata.title) or manifest.slug
@@ -206,7 +222,7 @@ def _generate_epubs(
             title = f"{metadata.title} {volume.start}-{volume.end}"
             name = volume_name(base, volume.start, volume.end, suffix)
         out_path = slug_dir / name
-        if not (resume and not force) or not out_path.exists():
+        if rebuild or force or not resume or not out_path.exists():
             cover_path = (
                 str(slug_dir / manifest.cover_path) if manifest.cover_path else None
             )
@@ -246,6 +262,16 @@ def _download_batch(
     }
     pending = [chapter for chapter in chapters if chapter.num not in existing]
     return pending[:volume_size]
+
+
+def _cleanup_orphan_epubs(slug_dir: Path, keep: list[str]) -> None:
+    """Borra EPUBs del disco que ya no estan referenciados en el manifest."""
+    if not keep:
+        return
+    keep_set = set(keep)
+    for path in slug_dir.glob("*.epub"):
+        if path.name not in keep_set:
+            path.unlink()
 
 
 def _load_or_create_manifest(
@@ -300,6 +326,43 @@ def _load_all_from_disk(chapter_dir: Path) -> list[Chapter]:
     return loaded
 
 
+def _build_epub_chapters(
+    reference: list[Chapter],
+    chapter_dir: Path,
+    placeholder: str,
+) -> list[Chapter]:
+    """Lista EPUB del mismo tamano/orden que ``reference``.
+
+    Por cada capitulo: si existe su archivo se carga y, si quedo vacio, se
+    sustituye por el placeholder; si no existe (capitulo sin traducir), se
+    crea un Chapter con el placeholder. Mantiene los tomos alineados con la
+    lista raw completa y evita paginas en blanco.
+    """
+    out: list[Chapter] = []
+    for chapter in reference:
+        path = chapter_dir / chapter_filename(chapter.num)
+        if path.exists():
+            loaded = load_chapter(path, chapter.num, chapter.url)
+            if is_chapter_empty(loaded.paragraphs):
+                loaded = Chapter(
+                    num=loaded.num,
+                    title=loaded.title,
+                    url=loaded.url,
+                    paragraphs=[placeholder],
+                )
+            out.append(loaded)
+        else:
+            out.append(
+                Chapter(
+                    num=chapter.num,
+                    title=chapter.title,
+                    url=chapter.url,
+                    paragraphs=[placeholder],
+                )
+            )
+    return out
+
+
 def _find_manifest_by_url(output_dir: Path, url: str) -> tuple[Path, Manifest]:
     """Busca el slug_dir cuyo manifest.source_url coincide con la URL."""
     if not output_dir.exists():
@@ -348,7 +411,9 @@ async def _run_translate_pending(
         concurrency=config.effective_translate_concurrency(translate_concurrency),
         on_progress=on_translate_progress,
     )
-    translated = _load_all_from_disk(slug_dir / "translated")
+    translated = _build_epub_chapters(
+        raw_chapters, slug_dir / "translated", EMPTY_PLACEHOLDER_ES
+    )
     metadata = NovelMetadata(
         title=manifest.title,
         author=manifest.author,
@@ -365,13 +430,86 @@ async def _run_translate_pending(
         translated=True,
         resume=resume,
         force=force,
+        rebuild=True,
         on_progress=on_epub_progress,
     )
     manifest.epub_translated = es_names
     manifest.translated = True
+    refresh_empty_counts(slug_dir / "raw", manifest)
+    _cleanup_orphan_epubs(
+        slug_dir,
+        keep=manifest.epub_original + manifest.epub_translated,
+    )
     manifest.save(slug_dir)
     return manifest
 
 
 def _epub_language(code: str) -> str:
     return code if code and code != "auto" else "en"
+
+
+def rebuild_volumes(slug_dir: Path, volume_size: int | None) -> Manifest:
+    """Reconstruye los EPUBs con un nuevo tamano de tomo desde el disco (sin red).
+
+    ``volume_size=None`` genera un unico EPUB ("ALL"). Valida el tamaño y
+    actualiza ``manifest.volume_size``. Regenera original y traducido, limpia
+    EPUBs huerfanos y refresca ``chapters_empty``.
+    """
+    manifest = Manifest.load(slug_dir)
+    if manifest is None:
+        raise PipelineError(f"no hay manifest en {slug_dir}")
+    raw_dir = slug_dir / "raw"
+    raw_chapters = _load_all_from_disk(raw_dir)
+    if not raw_chapters:
+        raise PipelineError("no hay capitulos descargados en disco")
+    if volume_size is not None and volume_size < 1:
+        raise PipelineError("volume_size debe ser >= 1")
+
+    manifest.volume_size = volume_size
+    metadata = NovelMetadata(
+        title=manifest.title,
+        author=manifest.author,
+        cover_url=manifest.cover_path,
+        source_url=manifest.source_url,
+    )
+    original_names = _generate_epubs(
+        slug_dir=slug_dir,
+        manifest=manifest,
+        metadata=metadata,
+        chapters=_build_epub_chapters(raw_chapters, raw_dir, EMPTY_PLACEHOLDER_EN),
+        volume_size=volume_size,
+        language=_epub_language(manifest.language_code),
+        translated=False,
+        resume=True,
+        force=False,
+        rebuild=True,
+        on_progress=None,
+    )
+    manifest.epub_original = original_names
+
+    translated_dir = slug_dir / "translated"
+    if manifest.translated or any(translated_dir.glob("*.md")):
+        es_names = _generate_epubs(
+            slug_dir=slug_dir,
+            manifest=manifest,
+            metadata=metadata,
+            chapters=_build_epub_chapters(
+                raw_chapters, translated_dir, EMPTY_PLACEHOLDER_ES
+            ),
+            volume_size=volume_size,
+            language="es",
+            translated=True,
+            resume=True,
+            force=False,
+            rebuild=True,
+            on_progress=None,
+        )
+        manifest.epub_translated = es_names
+
+    refresh_empty_counts(raw_dir, manifest)
+    _cleanup_orphan_epubs(
+        slug_dir,
+        keep=manifest.epub_original + manifest.epub_translated,
+    )
+    manifest.save(slug_dir)
+    return manifest

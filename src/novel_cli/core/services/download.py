@@ -25,7 +25,7 @@ def is_chapter_empty(paragraphs: list[str]) -> bool:
     return not [p for p in paragraphs if p.strip()]
 
 
-def _refresh_empty_counts(raw_dir: Path, manifest: Manifest) -> None:
+def refresh_empty_counts(raw_dir: Path, manifest: Manifest) -> None:
     """Recalcula chapters_empty/_nums desde los archivos raw del disco."""
     nums: list[int] = []
     for path in raw_dir.glob("*.md"):
@@ -76,7 +76,7 @@ async def download_chapters(
 
     if not missing:
         manifest.chapters_downloaded = len(existing_nums)
-        _refresh_empty_counts(raw_dir, manifest)
+        refresh_empty_counts(raw_dir, manifest)
         manifest.save(slug_dir)
         if on_progress:
             on_progress(len(chapters), len(chapters))

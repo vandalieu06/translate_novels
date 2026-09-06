@@ -7,9 +7,16 @@ import zipfile
 
 import pytest
 
+from novel_cli.core.models.state import Manifest
 from novel_cli.core.scraper.fetcher import Pacer
 from novel_cli.core.scraper.sites.generic import GenericAdapter
-from novel_cli.core.services.pipeline import PipelineError, run_pipeline
+from novel_cli.core.services.pipeline import (
+    EMPTY_PLACEHOLDER_EN,
+    EMPTY_PLACEHOLDER_ES,
+    PipelineError,
+    rebuild_volumes,
+    run_pipeline,
+)
 
 NOVEL_URL = "https://readhere.example/eternal-journey"
 CHAPTER_HTML = (
@@ -84,6 +91,11 @@ def run_kwargs(
 def read_epub(path) -> str:
     with zipfile.ZipFile(io.BytesIO(path.read_bytes())) as zf:
         return zf.read("EPUB/chapter0001.xhtml").decode("utf-8")
+
+
+def read_epub_chapter(path, num: int) -> str:
+    with zipfile.ZipFile(io.BytesIO(path.read_bytes())) as zf:
+        return zf.read(f"EPUB/chapter{num:04d}.xhtml").decode("utf-8")
 
 
 @pytest.mark.asyncio
@@ -337,3 +349,205 @@ async def test_translate_pending_no_translator_raises(tmp_path, fixture_loader):
         await run_pipeline(
             **run_kwargs(tmp_path, fetcher, translate_pending=True, translator=None)
         )
+
+
+@pytest.mark.asyncio
+async def test_translate_pending_rebuilds_existing_es_epub(tmp_path, fixture_loader):
+    """Un EPUB traducido existente se regenera cuando hay traducciones nuevas."""
+    toc = fixture_loader("generic_toc.html")
+    await run_pipeline(
+        **run_kwargs(
+            tmp_path, FakeFetcher(toc), volume_size=2, translate=True,
+            translator=FakeTranslator(),
+        )
+    )
+    slug_dir = tmp_path / "the-eternal-journey"
+    es_epub = slug_dir / "The Eternal Journey 1-2 (ES).epub"
+    assert es_epub.exists()
+    before = es_epub.read_bytes()
+
+    # el raw 2 cambia y su traduccion queda pendiente (se borra la traducida)
+    (slug_dir / "raw" / "0002.md").write_text("# Chapter 2\n\nNuevo contenido.\n", encoding="utf-8")
+    (slug_dir / "translated" / "0002.md").unlink()
+
+    translator2 = FakeTranslator()
+    manifest2 = await run_pipeline(
+        **run_kwargs(
+            tmp_path,
+            FakeFetcher(toc),
+            translate_pending=True,
+            translator=translator2,
+        )
+    )
+    # se regenero con la traduccion nueva a pesar de resume=True
+    assert es_epub.read_bytes() != before
+    assert manifest2.epub_translated == ["The Eternal Journey 1-2 (ES).epub"]
+
+
+@pytest.mark.asyncio
+async def test_translate_pending_refreshes_empty_counts(tmp_path, fixture_loader):
+    """El manifest refleja los capítulos vacíos reales tras translate_pending."""
+    toc = fixture_loader("generic_toc.html")
+    await run_pipeline(
+        **run_kwargs(
+            tmp_path, FakeFetcher(toc), volume_size=2, translate=True,
+            translator=FakeTranslator(),
+        )
+    )
+    slug_dir = tmp_path / "the-eternal-journey"
+    # vaciamos el raw 1 en disco
+    (slug_dir / "raw" / "0001.md").write_text("# Chapter 1\n\n", encoding="utf-8")
+
+    manifest2 = await run_pipeline(
+        **run_kwargs(
+            tmp_path,
+            FakeFetcher(toc),
+            translate_pending=True,
+            translator=FakeTranslator(),
+        )
+    )
+    assert manifest2.chapters_empty == 1
+    assert manifest2.chapters_empty_nums == [1]
+
+
+@pytest.mark.asyncio
+async def test_pipeline_cleans_orphan_epubs(tmp_path, fixture_loader):
+    """Los EPUBs del disco que ya no estan en el manifest se eliminan."""
+    toc = fixture_loader("generic_toc.html")
+    await run_pipeline(
+        **run_kwargs(tmp_path, FakeFetcher(toc), volume_size=2, download_all=True)
+    )
+    slug_dir = tmp_path / "the-eternal-journey"
+    assert (slug_dir / "The Eternal Journey 1-2.epub").exists()
+    assert (slug_dir / "The Eternal Journey 3-4.epub").exists()
+
+    # huérfanos de generaciones anteriores
+    (slug_dir / "The Eternal Journey 1-61.epub").write_bytes(b"stale")
+    (slug_dir / "old-single.epub").write_bytes(b"stale")
+
+    await run_pipeline(
+        **run_kwargs(tmp_path, FakeFetcher(toc), volume_size=2, download_all=True)
+    )
+
+    assert not (slug_dir / "The Eternal Journey 1-61.epub").exists()
+    assert not (slug_dir / "old-single.epub").exists()
+    assert (slug_dir / "The Eternal Journey 1-2.epub").exists()
+    assert (slug_dir / "The Eternal Journey 3-4.epub").exists()
+
+
+@pytest.mark.asyncio
+async def test_translated_epub_aligned_with_placeholders(tmp_path, fixture_loader):
+    """Un capitulo sin traduccion queda como placeholder y los tomos ES alinean con el original."""
+    toc = fixture_loader("generic_toc.html")
+    await run_pipeline(
+        **run_kwargs(
+            tmp_path, FakeFetcher(toc), volume_size=2, translate=True,
+            translator=FakeTranslator(), download_all=True,
+        )
+    )
+    slug_dir = tmp_path / "the-eternal-journey"
+    # el raw 3 queda vacio y su traduccion se limpia
+    (slug_dir / "raw" / "0003.md").write_text("# Chapter 3\n\n", encoding="utf-8")
+    (slug_dir / "translated" / "0003.md").unlink()
+
+    manifest2 = await run_pipeline(
+        **run_kwargs(
+            tmp_path, FakeFetcher(toc), translate_pending=True,
+            translator=FakeTranslator(),
+        )
+    )
+    assert [n.replace(" (ES)", "") for n in manifest2.epub_translated] == manifest2.epub_original
+    es_epub = slug_dir / "The Eternal Journey 3-4 (ES).epub"
+    assert es_epub.exists()
+    assert EMPTY_PLACEHOLDER_ES in read_epub_chapter(es_epub, 3)
+
+
+@pytest.mark.asyncio
+async def test_original_epub_empty_chapter_placeholder(tmp_path, fixture_loader):
+    """Un capitulo raw vacio muestra el aviso EN en el EPUB original."""
+    toc = fixture_loader("generic_toc.html")
+    await run_pipeline(
+        **run_kwargs(tmp_path, FakeFetcher(toc), volume_size=2, download_all=True)
+    )
+    slug_dir = tmp_path / "the-eternal-journey"
+    (slug_dir / "raw" / "0003.md").write_text("# Chapter 3\n\n", encoding="utf-8")
+
+    manifest = rebuild_volumes(slug_dir, 2)
+    orig_epub = slug_dir / "The Eternal Journey 3-4.epub"
+    assert EMPTY_PLACEHOLDER_EN in read_epub_chapter(orig_epub, 3)
+    assert manifest.volume_size == 2
+
+
+def test_rebuild_volumes_changes_size_and_cleans(tmp_path):
+    slug_dir = tmp_path / "novela"
+    slug_dir.mkdir()
+    Manifest(
+        slug="novela",
+        title="Novela",
+        source_url="https://example.com/novel",
+        translated=True,
+        volume_size=50,
+        chapters_downloaded=4,
+        chapters_translated=4,
+    ).save(slug_dir)
+    raw = slug_dir / "raw"
+    raw.mkdir()
+    for i in range(1, 5):
+        raw.joinpath(f"{i:04d}.md").write_text(
+            f"# Chapter {i}\n\nContent {i}\n", encoding="utf-8"
+        )
+    translated = slug_dir / "translated"
+    translated.mkdir()
+    for i in range(1, 5):
+        translated.joinpath(f"{i:04d}.md").write_text(
+            f"# Chapter {i}\n\nTraduccion {i}\n", encoding="utf-8"
+        )
+    # huérfano de una generación anterior
+    (slug_dir / "Novela 1-61.epub").write_bytes(b"stale")
+
+    manifest = rebuild_volumes(slug_dir, 2)
+    assert manifest.volume_size == 2
+    assert manifest.epub_original == [
+        "Novela 1-2.epub",
+        "Novela 3-4.epub",
+    ]
+    assert manifest.epub_translated == [
+        "Novela 1-2 (ES).epub",
+        "Novela 3-4 (ES).epub",
+    ]
+    assert (slug_dir / "Novela 1-2.epub").exists()
+    assert (slug_dir / "Novela 3-4.epub").exists()
+    assert not (slug_dir / "Novela 1-61.epub").exists()
+
+
+def test_rebuild_volumes_all_single_epub(tmp_path):
+    slug_dir = tmp_path / "novela"
+    slug_dir.mkdir()
+    Manifest(
+        slug="novela", title="Novela", source_url="https://example.com/novel",
+        translated=True, volume_size=50,
+    ).save(slug_dir)
+    raw = slug_dir / "raw"
+    raw.mkdir()
+    for i in range(1, 4):
+        raw.joinpath(f"{i:04d}.md").write_text(
+            f"# Chapter {i}\n\nContent {i}\n", encoding="utf-8"
+        )
+    translated = slug_dir / "translated"
+    translated.mkdir()
+    for i in range(1, 4):
+        translated.joinpath(f"{i:04d}.md").write_text(
+            f"# Chapter {i}\n\nTraduccion {i}\n", encoding="utf-8"
+        )
+
+    manifest = rebuild_volumes(slug_dir, None)
+    assert manifest.volume_size is None
+    assert manifest.epub_original == ["Novela.epub"]
+    assert manifest.epub_translated == ["Novela (ES).epub"]
+    assert (slug_dir / "Novela.epub").exists()
+    assert (slug_dir / "Novela (ES).epub").exists()
+
+
+def test_rebuild_volumes_requires_manifest(tmp_path):
+    with pytest.raises(PipelineError):
+        rebuild_volumes(tmp_path / "inexistente", 50)

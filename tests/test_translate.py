@@ -44,6 +44,7 @@ def make_libre(**kw) -> LibreTranslateTranslator:
     kw.setdefault("pacer", Pacer(0))
     kw.setdefault("max_retries", 3)
     kw.setdefault("backoff_base", 0.0)
+    kw.setdefault("base_url", "http://localhost:5000")
     return LibreTranslateTranslator(**kw)
 
 
@@ -318,6 +319,106 @@ async def test_empty_chapters_skipped_by_translation(tmp_path):
     assert len(received) == 1
     translated_dir = tmp_path / "translated"
     assert translated_dir.joinpath(chapter_filename(1)).exists()
+    assert not translated_dir.joinpath(chapter_filename(2)).exists()
+    assert manifest.chapters_translated == 1
+
+
+@pytest.mark.asyncio
+async def test_stale_empty_translated_retranslated(tmp_path):
+    """Un translated/<NNNN>.md vacio (stale) se re-traduce si el raw tiene contenido."""
+    chapters = [Chapter(num=1, title="Ch 1", url="u1", paragraphs=["Real content"])]
+    translated_dir = tmp_path / "translated"
+    translated_dir.mkdir()
+    translated_dir.joinpath(chapter_filename(1)).write_text("# Ch 1\n\n", encoding="utf-8")
+    received: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        received.append(request.url.params.get("q", ""))
+        return echo_handler(request)
+
+    with respx.mock() as router:
+        router.get(GTX_ENDPOINT).mock(side_effect=handler)
+        translator = make_translator()
+        manifest = make_manifest(tmp_path)
+        try:
+            await translate_chapters(
+                translator=translator,
+                chapters=chapters,
+                slug_dir=tmp_path,
+                manifest=manifest,
+            )
+        finally:
+            await translator.aclose()
+    assert len(received) == 1
+    content = (translated_dir / chapter_filename(1)).read_text(encoding="utf-8")
+    assert "Real content" in content
+    assert manifest.chapters_translated == 1
+
+
+@pytest.mark.asyncio
+async def test_stale_empty_translated_cleaned_when_raw_empty(tmp_path):
+    """Un translated/<NNNN>.md vacio cuyo raw sigue vacio se limpia (no se traduce)."""
+    chapters = [Chapter(num=2, title="Ch 2", url="u2", paragraphs=[])]
+    translated_dir = tmp_path / "translated"
+    translated_dir.mkdir()
+    translated_dir.joinpath(chapter_filename(2)).write_text("# Ch 2\n\n", encoding="utf-8")
+    received: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        received.append(request.url.params.get("q", ""))
+        return echo_handler(request)
+
+    with respx.mock(assert_all_called=False) as router:
+        router.get(GTX_ENDPOINT).mock(side_effect=handler)
+        translator = make_translator()
+        manifest = make_manifest(tmp_path)
+        try:
+            await translate_chapters(
+                translator=translator,
+                chapters=chapters,
+                slug_dir=tmp_path,
+                manifest=manifest,
+            )
+        finally:
+            await translator.aclose()
+    assert received == []
+    assert not translated_dir.joinpath(chapter_filename(2)).exists()
+    assert manifest.chapters_translated == 0
+
+
+@pytest.mark.asyncio
+async def test_stale_empty_translated_mixed_cleanup_and_retranslate(tmp_path):
+    """Mezcla: translated vacio con raw corregido se re-traduce; con raw vacio se limpia."""
+    chapters = [
+        Chapter(num=1, title="Ch 1", url="u1", paragraphs=["Real content"]),
+        Chapter(num=2, title="Ch 2", url="u2", paragraphs=[]),
+    ]
+    translated_dir = tmp_path / "translated"
+    translated_dir.mkdir()
+    translated_dir.joinpath(chapter_filename(1)).write_text("# Ch 1\n\n", encoding="utf-8")
+    translated_dir.joinpath(chapter_filename(2)).write_text("# Ch 2\n\n", encoding="utf-8")
+    received: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        received.append(request.url.params.get("q", ""))
+        return echo_handler(request)
+
+    with respx.mock() as router:
+        router.get(GTX_ENDPOINT).mock(side_effect=handler)
+        translator = make_translator()
+        manifest = make_manifest(tmp_path)
+        try:
+            await translate_chapters(
+                translator=translator,
+                chapters=chapters,
+                slug_dir=tmp_path,
+                manifest=manifest,
+            )
+        finally:
+            await translator.aclose()
+    assert len(received) == 1
+    content1 = (translated_dir / chapter_filename(1)).read_text(encoding="utf-8")
+    assert "Real content" in content1
     assert not translated_dir.joinpath(chapter_filename(2)).exists()
     assert manifest.chapters_translated == 1
 

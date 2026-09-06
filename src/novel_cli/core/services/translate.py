@@ -17,7 +17,11 @@ from novel_cli.core.scraper.fetcher import (
     Pacer,
     parse_retry_after,
 )
-from novel_cli.core.services.download import format_chapter, is_chapter_empty
+from novel_cli.core.services.download import (
+    format_chapter,
+    is_chapter_empty,
+    load_chapter,
+)
 from novel_cli.core.utils.names import chapter_filename
 from novel_cli.core.utils.text import split_text_by_words
 
@@ -302,10 +306,31 @@ async def translate_chapters(
     """
     translated_dir = slug_dir / "translated"
     translated_dir.mkdir(parents=True, exist_ok=True)
-    existing_nums = {int(path.stem) for path in translated_dir.glob("*.md")}
+    # Un translated/<NNNN>.md vacio (heredado de cuando el raw estaba vacio) no
+    # cuenta como "ya traducido": si el raw tiene contenido se re-traduce.
+    existing_nums = {
+        int(path.stem)
+        for path in translated_dir.glob("*.md")
+        if not is_chapter_empty(load_chapter(path, int(path.stem), "").paragraphs)
+    }
     todo = [chapter for chapter in chapters if force or chapter.num not in existing_nums]
     # Los capitulos vacios (sin contenido en raw) no se traducen ni se marcan.
-    todo = [chapter for chapter in todo if not is_chapter_empty(chapter.paragraphs)]
+    # Se limpia ademas el translated/<NNNN>.md vacio stale para que el EPUB
+    # traducido no incluya capitulos en blanco.
+    skipped_empty: list[Chapter] = []
+    filtered: list[Chapter] = []
+    for chapter in todo:
+        if is_chapter_empty(chapter.paragraphs):
+            skipped_empty.append(chapter)
+        else:
+            filtered.append(chapter)
+    todo = filtered
+    for chapter in skipped_empty:
+        stale = translated_dir / chapter_filename(chapter.num)
+        if stale.exists() and is_chapter_empty(
+            load_chapter(stale, chapter.num, "").paragraphs
+        ):
+            stale.unlink()
 
     if not todo:
         manifest.chapters_translated = len(existing_nums)
