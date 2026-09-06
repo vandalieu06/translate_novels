@@ -6,6 +6,29 @@ import os
 from pathlib import Path
 
 
+def _load_dotenv(path: Path | None = None) -> None:
+    """Carga variables KEY=VALUE de un .env en os.environ sin sobrescribir.
+
+    Sirve para fijar la configuracion (p. ej. NOVEL_TRANSLATE_BACKEND) sin
+    exportar variables en cada arranque. No requiere dependencias externas.
+    """
+    path = path or Path(os.environ.get("NOVEL_CLI_ENV_FILE", ".env"))
+    if not path.exists():
+        return
+    for line in path.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, _, value = line.partition("=")
+        key = key.strip()
+        value = value.strip().strip('"').strip("'")
+        if key and key not in os.environ:
+            os.environ[key] = value
+
+
+_load_dotenv()
+
+
 def _int_env(name: str, default: int) -> int:
     value = os.environ.get(name)
     if value is None or not value.strip():
