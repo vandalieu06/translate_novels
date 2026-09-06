@@ -8,6 +8,7 @@ from typing import Any
 from typer.testing import CliRunner
 
 from novel_cli.cli.app import app
+from novel_cli.core import config as config_module
 from novel_cli.core.models.state import Manifest
 from novel_cli.core.scraper.fetcher import FetchError
 from novel_cli.core.services.pipeline import PipelineError
@@ -40,13 +41,13 @@ def test_invalid_url_exit_1():
 def test_invalid_volume_size_exit_1():
     result = runner.invoke(app, [NOVEL_URL, "--volume-size", "75"])
     assert result.exit_code == 1
-    assert "50 o 100" in result.output
+    assert "50, 100, 150 o 200" in result.output
 
 
 def test_volume_size_zero_rejected_exit_1():
     result = runner.invoke(app, [NOVEL_URL, "--volume-size", "0"])
     assert result.exit_code == 1
-    assert "50 o 100" in result.output
+    assert "50, 100, 150 o 200" in result.output
 
 
 def test_invalid_concurrency_exit_1():
@@ -95,6 +96,8 @@ def test_translate_pending_flag_builds_translator(monkeypatch, tmp_path):
         return Manifest(slug="novela", title="Novela")
 
     monkeypatch.setattr(cli_app_module, "run_pipeline", fake)
+    # fijamos el backend google para que el test no dependa del .env ambiente
+    monkeypatch.setattr(config_module, "TRANSLATE_BACKEND", "google")
     result = runner.invoke(app, [NOVEL_URL, "-o", str(tmp_path), "--translate-pending"])
     assert result.exit_code == 0
     assert captured["translate_pending"] is True

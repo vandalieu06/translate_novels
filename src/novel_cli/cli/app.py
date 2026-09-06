@@ -126,8 +126,8 @@ def _make_run_app() -> typer.Typer:
         """Descarga una web novel, la convierte a EPUB y opcionalmente la traduce."""
         if not _valid_url(url):
             _fail("URL invalida: debe ser http(s)", EXIT_VALIDATION)
-        if volume_size not in (50, 100):
-            _fail("--volume-size solo acepta 50 o 100", EXIT_VALIDATION)
+        if volume_size not in (50, 100, 150, 200):
+            _fail("--volume-size solo acepta 50, 100, 150 o 200", EXIT_VALIDATION)
         if concurrency < 1:
             _fail("--concurrency debe ser >= 1", EXIT_VALIDATION)
         if translate_concurrency < 1:
