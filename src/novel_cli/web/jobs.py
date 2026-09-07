@@ -132,6 +132,7 @@ class JobManager:
                 download_all=bool(options.get("all")),
                 translate_pending=bool(options.get("translate_pending")),
                 translate_concurrency=translate_concurrency,
+                target=options.get("target_language"),
                 fetcher=fetcher,
                 translator=translator,
                 on_status=lambda msg: job.status("status", msg),

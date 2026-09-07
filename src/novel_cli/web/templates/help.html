@@ -1,0 +1,179 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Ayuda · novel-cli web</title>
+  <link
+    rel="icon"
+    href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%23fa6f78'/%3E%3Ctext x='16' y='22' font-family='Arial' font-size='16' font-weight='700' fill='%23fff' text-anchor='middle'%3EN%3C/text%3E%3C/svg%3E"
+  />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link
+    href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+JP:wght@200;400;500;700&display=swap"
+    rel="stylesheet"
+  />
+  <link rel="stylesheet" href="/static/css/app.css" />
+</head>
+<body data-page="help">
+  <header class="site-header">
+    <div class="container">
+      <a class="brand" href="/">
+        <span class="logo">N</span>
+        novel<span>-cli</span>
+      </a>
+      <nav id="main-nav">
+        <a href="/" data-nav="landing">Descargar</a>
+        <a href="/biblioteca" data-nav="library">Biblioteca</a>
+        <a href="/ayuda" data-nav="help">Ayuda</a>
+      </nav>
+      <div class="spacer"></div>
+      <span class="backend-pill" id="backend-pill" hidden></span>
+      <div class="server-status" id="server-status">
+        <span class="dot"></span><span id="server-status-text">Servidor OK</span>
+      </div>
+    </div>
+  </header>
+
+  <section class="section page-intro">
+    <div class="container">
+      <div class="section-header">
+        <div class="kicker">Guía rápida</div>
+        <h2>Qué hace cada acción</h2>
+        <p class="section-desc">Resumen de las acciones de la web por si olvidas qué hace cada una.</p>
+      </div>
+    </div>
+  </section>
+
+  <section class="section">
+    <div class="container">
+      <div class="guide-grid">
+
+        <div class="guide-card">
+          <div class="guide-icon">&#11015;</div>
+          <div>
+            <h3>Nueva descarga</h3>
+            <p>Pega la URL de la web novel y lanza la descarga. Descarga por lotes de un tomo (default 50 capítulos); vuelve a lanzar la misma URL para avanzar al siguiente tomo.</p>
+          </div>
+        </div>
+
+        <div class="guide-card">
+          <div class="guide-icon">&#128278;</div>
+          <div>
+            <h3>Capítulos por tomo</h3>
+            <p>Cuántos capítulos entran en cada EPUB (50 / 100 / 150 / 200). Puedes cambiarlo después desde la ficha de la novela.</p>
+          </div>
+        </div>
+
+        <div class="guide-card">
+          <div class="guide-icon">&#127760;</div>
+          <div>
+            <h3>Traducir</h3>
+            <p>Traduce la novela a un idioma que elijas (es, en, fr, de, it, pt, ru, ja, ko, zh). En la ficha de una novela no traducida, el botón <strong>Traducir</strong> abre el selector de idioma; en la descarga se elige al activar "Traducir".</p>
+          </div>
+        </div>
+
+        <div class="guide-card">
+          <div class="guide-icon">&#9733;</div>
+          <div>
+            <h3>Todos los capítulos</h3>
+            <p>Descarga toda la novela de una vez en vez de por tomos. Equivale a la opción <code>--all</code> del CLI.</p>
+          </div>
+        </div>
+
+        <div class="guide-card">
+          <div class="guide-icon">&#128221;</div>
+          <div>
+            <h3>Traducir pendientes</h3>
+            <p>Traduce solo los capítulos que faltan o quedaron vacíos, sin descargar de nuevo. Útil si ya tenías capítulos descargados sin traducir.</p>
+          </div>
+        </div>
+
+        <div class="guide-card">
+          <div class="guide-icon">&#8634;</div>
+          <div>
+            <h3>Forzar re-descarga</h3>
+            <p>Vuelve a descargar capítulos aunque ya existan en disco. Ignora el estado guardado.</p>
+          </div>
+        </div>
+
+        <div class="guide-card">
+          <div class="guide-icon">&#127918;</div>
+          <div>
+            <h3>Forzar Playwright</h3>
+            <p>Usa un navegador real (JS) para obtener la página en vez del descargador HTTP. Solo si la descarga normal falla.</p>
+          </div>
+        </div>
+
+        <div class="guide-card">
+          <div class="guide-icon">&#8635;</div>
+          <div>
+            <h3>Sync (↻)</h3>
+            <p>En la ficha de una novela ya descargada: obtiene los capítulos nuevos sin volver a pegar la URL. Descarga el siguiente tomo pendiente y respeta si la novela está traducida.</p>
+          </div>
+        </div>
+
+        <div class="guide-card">
+          <div class="guide-icon">&#128221;</div>
+          <div>
+            <h3>Re-traducir (📝)</h3>
+            <p>En novelas ya traducidas: traduce los capítulos pendientes (faltantes o vacíos) y regenera los EPUB en el idioma guardado. No sobrescribe lo ya traducido.</p>
+          </div>
+        </div>
+
+        <div class="guide-card">
+          <div class="guide-icon">&#128196;</div>
+          <div>
+            <h3>Tomos N (📄)</h3>
+            <p>Cambia el tamaño de tomo (50/100/150/200/ALL) y regenera los EPUBs con el nuevo tamaño sin descargar ni traducir. ALL genera un único EPUB.</p>
+          </div>
+        </div>
+
+        <div class="guide-card">
+          <div class="guide-icon">&#128190;</div>
+          <div>
+            <h3>Descargar EPUB</h3>
+            <p>En la sección de archivos de cada novela: descarga un tomo en formato EPUB, en su versión original o traducida (ES).</p>
+          </div>
+        </div>
+
+        <div class="guide-card">
+          <div class="guide-icon">&#9888;</div>
+          <div>
+            <h3>Capítulos vacíos</h3>
+            <p>Un aviso indica capítulos que llegaron sin contenido. Quedan pendientes de reintento: vuelve con Sync o Re-traducir.</p>
+          </div>
+        </div>
+
+        <div class="guide-card">
+          <div class="guide-icon">&#9209;</div>
+          <div>
+            <h3>Cancelar</h3>
+            <p>Detiene el job en curso (descarga, traducción o EPUB). El servidor guarda el progreso; puedes reanudar con la misma URL.</p>
+          </div>
+        </div>
+
+        <div class="guide-card">
+          <div class="guide-icon">&#128274;</div>
+          <div>
+            <h3>Token de acceso</h3>
+            <p>Si el servidor usa <code>NOVEL_WEB_TOKEN</code>, la web lo pide una vez y lo recuerda en el navegador.</p>
+          </div>
+        </div>
+
+      </div>
+    </div>
+  </section>
+
+  <footer class="site-footer">
+    <div class="container">
+      <span class="foot-brand">novel-cli web</span>
+      <span>FastAPI + UI responsive · diseño MOSH</span>
+    </div>
+  </footer>
+
+  <div id="toast"></div>
+  <script src="/static/js/common.js"></script>
+</body>
+</html>

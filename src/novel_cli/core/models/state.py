@@ -28,6 +28,7 @@ class Manifest(BaseModel):
     chapters_empty_nums: list[int] = []
     volume_size: int | None = None
     translated: bool = False
+    translated_language: str | None = None
     epub_original: list[str] = []
     epub_translated: list[str] = []
     created_at: str | None = None

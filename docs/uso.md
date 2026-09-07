@@ -2,7 +2,7 @@
 
 > Documentos relacionados: [Arquitectura](arquitectura.md) · [Features](features.md)
 
-CLI para descargar web novels, convertirlas a EPUB y opcionalmente traducirlas a español (endpoint gratuito de Google Translate). Escrito en Python con `uv`, `httpx`, `ebooklib`, `typer` y `rich`.
+CLI para descargar web novels, convertirlas a EPUB y opcionalmente traducirlas a un idioma elegible (por defecto español; endpoint gratuito de Google Translate o LibreTranslate local). Escrito en Python con `uv`, `httpx`, `ebooklib`, `typer` y `rich`.
 
 ## Instalación
 
@@ -35,7 +35,8 @@ Esto te da un primer volumen al instante sin bajar toda la novela de golpe. Para
 |---|---|
 | `-o, --output <dir>` | Directorio base de salida (default: env `NOVEL_OUTPUT_DIR` o `./output`). |
 | `-v, --volume-size <50\|100>` | Capítulos por tomo (default: **50**). |
-| `-t, --translate` | Traduce a español y genera además el EPUB traducido (`Novela 1-50 (ES).epub`). |
+| `-t, --translate` | Traduce al idioma destino y genera además el EPUB traducido (`Novela 1-50 (ES).epub`). |
+| `--target <lang>` | Idioma destino de la traducción (default `es` o `NOVEL_TRANSLATE_TARGET`). Disponibles: `es`, `en`, `fr`, `de`, `it`, `pt`, `ru`, `ja`, `ko`, `zh`. |
 | `--resume / --no-resume` | Reanudar según `.manifest.json` (default: `--resume`). |
 | `-f, --force` | Ignora el manifest y re-descarga (y re-traduce) todo. |
 | `--all` | Descarga **todos** los capítulos de golpe (en vez de un tomo por ejecución). |
@@ -52,8 +53,11 @@ Esto te da un primer volumen al instante sin bajar toda la novela de golpe. Para
 novel-cli https://novelfire.net/book/inner-voice-all-heroines-hear-my-inner-voice
 novel-cli https://novelfire.net/book/inner-voice-all-heroines-hear-my-inner-voice   # ahora baja 51-100
 
-# Tomos de 100 capítulos + traducción a español
+# Tomos de 100 capítulos + traducción a español (idioma por defecto)
 novel-cli https://example.com/novel -v 100 -t
+
+# Traducción a otro idioma
+novel-cli https://example.com/novel -t --target fr
 
 # Descargar toda la novela de una vez, en tomos de 50
 novel-cli https://example.com/novel --all
@@ -209,14 +213,26 @@ NOVEL_WEB_TOKEN=clave-secreta uv run novel-cli web --no-browser
 
 Desde la tablet/móvil abre `http://<ip-del-pc>:8000/` en el navegador (ambos en la misma red).
 
+### Páginas de la web
+
+La web se organiza en varias páginas (navegación común: **Descargar · Biblioteca · Ayuda**):
+
+- **`/`** — Descarga: formulario con URL, tomo, concurrencia y opciones, progreso en vivo y una franja de **novelas recientes** (portadas) que enlaza a la ficha de cada una.
+- **`/biblioteca`** — Grid de solo portadas: toca una portada para abrir su ficha.
+- **`/novela/{slug}`** — Ficha individual: portada grande, datos, progreso, acciones (**Traducir** en novelas no traducidas, Sync, Re-traducir, Tomos) con su progreso en vivo y la lista de **EPUBs** generados (original y traducción).
+- **`/ayuda`** — Guía rápida de qué hace cada acción, por si olvidas el detalle.
+
 ### Qué ofrece
 
-- **Lanzar descarga**: URL, tomo (`50`/`100`), concurrencia y opciones (`--translate`, `--all`, `--translate-pending`, `--force`, `--playwright`), igual que el CLI.
+- **Lanzar descarga**: URL, tomo (`50`/`100`), concurrencia, idioma de traducción y opciones (`--translate`, `--all`, `--translate-pending`, `--force`, `--playwright`), igual que el CLI.
 - **Progreso en vivo** por WebSocket: fases de descarga, traducción y EPUB con barras y contadores.
-- **Sincronizar novela** (botón **↻ Sync** en cada tarjeta): obtiene nuevos capítulos de una novela ya descargada **sin re-pegar la URL**. El sync reusa la `source_url` guardada y el mismo mecanismo de la CLI (misma URL + `--resume` → descarga el siguiente tomo pendiente), y **hereda la traducción y el tamaño de tomo** de la novela: si la novela se descargó traducida, los nuevos capítulos también se traducen y se regenera el EPUB `(ES)`.
-- **Re-traducir** (botón **📝 Re-traducir** en cada tarjeta, solo en novelas ya traducidas): lanza un job de **solo traducción** (sin descargar ni tocar el TOC) que **traduce los capítulos pendientes** — faltantes y `translated/` vacíos corregidos — usando las opciones del manifest (`volume_size`, etc.). No sobrescribe lo ya traducido; si no hay pendientes no cambia nada. **Regenera siempre los EPUB `(ES)`** con las traducciones actuales y **limpia del disco los EPUBs huérfanos** (los que ya no están referenciados en el manifest, p. ej. tomos con rangos viejos).
-- **Cambiar tamaño de tomo** (botón **📄 Tomos N** en cada tarjeta): abre un modal con píldoras **50 · 100 · 150 · 200 · ALL** (marca el tamaño actual). Al elegir uno se habilita **Regenerar**, que reconstruye los EPUBs (original y traducido) con el nuevo tamaño sin descargar ni traducir; **ALL** genera un único EPUB. El tamaño se guarda en el manifest y lo heredan los próximos **Sync**/**Re-traducir**. El formulario de descarga acepta ahora 50/100/150/200.
-- **Biblioteca**: lista las novelas ya descargadas (`output/<slug>/`) con portada, % de progreso, nº de volúmenes y botones para **descargar los EPUB** (original y traducido) directamente al dispositivo.
+- **Traducir** (botón **🌐 Traducir** en la ficha de novelas no traducidas): abre un **modal para elegir el idioma** (es, en, fr, de, it, pt, ru, ja, ko, zh) y lanza un job de **solo traducción** de los capítulos pendientes; si el idioma difiere del guardado, **re-traduce todo** sin volver a descargar.
+- **Sincronizar novela** (botón **↻ Sync** en la ficha de la novela): obtiene nuevos capítulos de una novela ya descargada **sin re-pegar la URL**. El sync reusa la `source_url` guardada y el mismo mecanismo de la CLI (misma URL + `--resume` → descarga el siguiente tomo pendiente), y **hereda la traducción, el idioma y el tamaño de tomo** de la novela: si la novela se descargó traducida, los nuevos capítulos también se traducen y se regenera el EPUB traducido.
+- **Re-traducir** (botón **📝 Re-traducir** en la ficha, solo en novelas ya traducidas): lanza un job de **solo traducción** (sin descargar ni tocar el TOC) que **traduce los capítulos pendientes** — faltantes y `translated/` vacíos corregidos — usando las opciones del manifest (`volume_size`, idioma). No sobrescribe lo ya traducido; si no hay pendientes no cambia nada. **Regenera siempre los EPUB traducidos** con las traducciones actuales y **limpia del disco los EPUBs huérfanos** (los que ya no están referenciados en el manifest, p. ej. tomos con rangos viejos).
+- **Cambiar tamaño de tomo** (botón **📄 Tomos N** en la ficha): abre un modal con píldoras **50 · 100 · 150 · 200 · ALL** (marca el tamaño actual). Al elegir uno se habilita **Regenerar**, que reconstruye los EPUBs (original y traducido) con el nuevo tamaño sin descargar ni traducir; **ALL** genera un único EPUB. El tamaño se guarda en el manifest y lo heredan los próximos **Sync**/**Re-traducir**. El formulario de descarga acepta ahora 50/100/150/200.
+- **Biblioteca** (`/biblioteca`): grid de portadas de las novelas ya descargadas (`output/<slug>/`); cada portada abre su ficha.
+- **Ficha de novela** (`/novela/{slug}`): portada, título/autor, badges (idioma + original / original), % de progreso, aviso de capítulos vacíos, acciones y la lista de **EPUBs** (original y traducción) para descargarlos directamente al dispositivo.
+- **Guía de acciones** (`/ayuda`): resumen de qué hace cada acción.
 - **Cancelar** un job en curso.
 - **Un job activo a la vez**: al lanzar un job nuevo, la UI consulta `GET /api/jobs` en el servidor y bloquea "Lanzar descarga"/"Sync" mientras exista un job en estado `pending` o `running`. Al terminar (listo/error/cancelado) se puede lanzar otro inmediatamente.
 

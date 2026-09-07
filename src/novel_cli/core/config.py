@@ -56,7 +56,23 @@ DEFAULT_CONCURRENCY = 4
 # Reintentos de capitulos vacios (parser devolvio 0 parrafos).
 EMPTY_RETRIES = 3
 EMPTY_RETRY_BACKOFF = (2.0, 4.0, 6.0)
-DEFAULT_TRANSLATE_TARGET = "es"
+DEFAULT_TRANSLATE_TARGET = os.environ.get("NOVEL_TRANSLATE_TARGET", "es")
+
+# Idiomas destino de traduccion (codigo -> etiqueta) para CLI/UI. Lista curada:
+# Google acepta cualquiera; con LibreTranslate requiere que el modelo este instalado.
+TRANSLATE_TARGET_LANGUAGES: dict[str, str] = {
+    "es": "Español",
+    "en": "English",
+    "fr": "Français",
+    "de": "Deutsch",
+    "it": "Italiano",
+    "pt": "Português",
+    "ru": "Русский",
+    "ja": "日本語",
+    "ko": "한국어",
+    "zh": "中文",
+}
+
 DEFAULT_VOLUME_SIZE = 50
 
 # Selector de backend de traduccion (para pruebas locales con LibreTranslate).
@@ -104,6 +120,16 @@ def effective_translate_concurrency(requested: int | None) -> int:
     if TRANSLATE_BACKEND == "google":
         return 1
     return max(1, min(value, TRANSLATE_MAX_CONCURRENCY))
+
+
+def translate_target_default() -> str:
+    """Idioma destino por defecto (validado contra la lista curada)."""
+    target = DEFAULT_TRANSLATE_TARGET
+    return target if target in TRANSLATE_TARGET_LANGUAGES else "es"
+
+
+def is_valid_translate_target(target: str) -> bool:
+    return target in TRANSLATE_TARGET_LANGUAGES
 
 
 def default_output() -> Path:

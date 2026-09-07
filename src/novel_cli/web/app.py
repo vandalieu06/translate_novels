@@ -25,6 +25,10 @@ def _token() -> str | None:
     return os.environ.get("NOVEL_WEB_TOKEN") or None
 
 
+def _template(name: str) -> str:
+    return (Path(__file__).parent / "templates" / name).read_text(encoding="utf-8")
+
+
 def create_app(*, output_dir: Path | None = None) -> FastAPI:
     out = output_dir or config.default_output()
     manager = JobManager(default_output_dir=out)
@@ -52,7 +56,19 @@ def create_app(*, output_dir: Path | None = None) -> FastAPI:
 
     @app.get("/", response_class=HTMLResponse, include_in_schema=False)
     async def index() -> str:
-        return (web_dir / "templates" / "index.html").read_text(encoding="utf-8")
+        return _template("index.html")
+
+    @app.get("/biblioteca", response_class=HTMLResponse, include_in_schema=False)
+    async def biblioteca() -> str:
+        return _template("library.html")
+
+    @app.get("/ayuda", response_class=HTMLResponse, include_in_schema=False)
+    async def ayuda() -> str:
+        return _template("help.html")
+
+    @app.get("/novela/{slug}", response_class=HTMLResponse, include_in_schema=False)
+    async def novela(slug: str) -> str:
+        return _template("novel.html")
 
     @app.get("/api/config", include_in_schema=False)
     async def config_info() -> dict[str, object]:
@@ -61,6 +77,8 @@ def create_app(*, output_dir: Path | None = None) -> FastAPI:
             "default_volume_size": config.DEFAULT_VOLUME_SIZE,
             "default_concurrency": config.DEFAULT_CONCURRENCY,
             "translate_backend": config.TRANSLATE_BACKEND,
+            "default_translate_target": config.translate_target_default(),
+            "translate_languages": config.TRANSLATE_TARGET_LANGUAGES,
         }
 
     return app

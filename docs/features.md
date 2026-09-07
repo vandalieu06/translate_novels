@@ -31,7 +31,7 @@
 - **Párrafo a párrafo** con chunking (~400 palabras) y **reensamblado 1:1**; el EPUB traducido conserva la estructura del original.
 - **Caché en disco** (`translated/<NNNN>.md`): no re-traduce lo ya hecho; retry/pacing ante 429/503. Un `translated/` vacío (heredado de un capítulo sin contenido) no cuenta como traducido: se re-traduce si el raw se arregló y se limpia si sigue vacío.
 - **Traducción en paralelo por lotes** (`-tc/--translate-concurrency`): traduce varios capítulos a la vez con pool async (patrón igual a la descarga). Default inteligente por backend (1 google / 4 libre) y **capa de protección**: google fuerza 1 (no quemar el endpoint), libre topa en 16. El pacer compartido mantiene el ritmo global de peticiones.
-- `-t/--translate` genera el EPUB original **y** el traducido (`Novela 1-50 (ES).epub`).
+- **Idioma destino elegible** (`--target <lang>`): lista curada (`config.TRANSLATE_TARGET_LANGUAGES`: es, en, fr, de, it, pt, ru, ja, ko, zh; env `NOVEL_TRANSLATE_TARGET`). `-t/--translate` genera el EPUB original **y** el traducido (`Novela 1-50 (ES).epub`, sufijo según idioma).
 - **`--translate-pending`**: traduce solo los capítulos pendientes (ya descargados, sin traducir) sin descargar nuevos ni tocar el TOC — ideal para retomar una traducción cortada por rate-limit.
 
 ### CLI
@@ -45,18 +45,19 @@
 - **FastAPI + Uvicorn**: servidor con UI responsive (mobile-first) servida por el propio backend, sin toolchain de build (HTML + CSS + JS vanilla).
 - **Diseño MOSH** (`DESIGN.md`): coral `#fa6f78` + grayscale, IBM Plex Sans JP / system-ui, CTA negros, flat con bordes 1px, headings weight 400, degular para números grandes.
 - **Jobs en background**: cada descarga/traducción corre como `run_pipeline` en un job (un job activo a la vez) con su propio fetcher/translator y cierre limpio.
-- **Concurrencia de traducción en la UI**: campo "Concurrencia traducción" en el form, visible solo al activar "Traducir a español"; se envía como `translate_concurrency`.
+- **Concurrencia de traducción en la UI**: campo "Concurrencia traducción" en el form, visible solo al activar "Traducir"; se envía como `translate_concurrency`.
 - **Progreso en vivo por WebSocket** (`/api/jobs/{id}/ws`): fases de descarga, traducción y EPUB con los mismos callbacks que `rich`.
-- **Sync de novelas** (`POST /api/novels/{slug}/sync`): botón **↻ Sync** en cada tarjeta para obtener nuevos capítulos sin re-pegar la URL; hereda traducción y tamaño de tomo de la novela.
-- **Re-traducir** (`POST /api/novels/{slug}/retranslate`): botón **📝 Re-traducir** (solo en novelas traducidas) que traduce los pendientes y **regenera los EPUB `(ES)`** con las traducciones actuales (sin descargar ni tocar el TOC).
+- **Sync de novelas** (`POST /api/novels/{slug}/sync`): botón **↻ Sync** en cada ficha para obtener nuevos capítulos sin re-pegar la URL; hereda traducción, idioma y tamaño de tomo de la novela.
+- **Traducir** (`POST /api/novels/{slug}/retranslate` con `{target_language}`): botón **🌐 Traducir** en la ficha de novelas no traducidas que abre un **modal de idiomas**; si el idioma cambia, re-traduce todo (sin descargar). **📝 Re-traducir** (novelas traducidas) traduce solo los pendientes y regenera los EPUB en el idioma guardado.
 - **Cambiar tamaño de tomo** (`POST /api/novels/{slug}/volume-size`): botón **📄 Tomos N** abre un modal con píldoras **50 · 100 · 150 · 200 · ALL**; al elegir una se reconstruyen los EPUBs (original y traducido) con el nuevo tamaño y se actualiza el manifest.
 - **Job lock en el servidor**: la UI consulta `GET /api/jobs` (estados `pending`/`running`) para saber si hay un job activo en vez de fiarse del estado local, y lo permite de nuevo al terminar.
-- **API REST**: `GET /api/jobs`, `POST /api/jobs`, `GET /api/jobs/{id}`, `POST /api/jobs/{id}/cancel`, `GET /api/novels`, `GET /api/novels/{slug}`, descarga de EPUB y portada, `POST /api/novels/{slug}/sync`, `POST /api/novels/{slug}/retranslate`, `POST /api/novels/{slug}/volume-size`, `GET /api/config` (incluye `translate_backend`; la UI muestra el motor activo).
+- **Web multi-página**: `/` (descarga + progreso + novelas recientes), `/biblioteca` (grid de solo portadas, tap → ficha), `/novela/{slug}` (ficha individual: info, acciones Traducir/Sync/Re-traducir/Tomos, progreso del job y listado de EPUBs Original/Traducción) y `/ayuda` (guía estática de qué hace cada acción). JS partido en módulos compartidos (`common.js`, `jobs.js`) + uno por página.
+- **API REST**: `GET /api/jobs`, `POST /api/jobs`, `GET /api/jobs/{id}`, `POST /api/jobs/{id}/cancel`, `GET /api/novels`, `GET /api/novels/{slug}`, descarga de EPUB y portada, `POST /api/novels/{slug}/sync`, `POST /api/novels/{slug}/retranslate`, `POST /api/novels/{slug}/volume-size`, `GET /api/config` (incluye `translate_backend`, `translate_languages` y `default_translate_target`).
 - **Auth opcional** con `NOVEL_WEB_TOKEN` (cabecera `X-Auth-Token`); `--host`/`--port`/`--no-browser` configurables.
 - Entry points: `novel-cli web` y `novel-cli-web`.
 
 ### Calidad
-- **168 tests unitarios sin red** (fixtures + `respx`) y `ruff` limpio.
+- **182 tests unitarios sin red** (fixtures + `respx`) y `ruff` limpio.
 - Separación estricta `core/` (dominio puro) vs `cli/` (typer/rich).
 
 ---
@@ -73,7 +74,7 @@
 - **Descarga de imágenes dentro de los capítulos** (hoy el EPUB queda autocontenido sin imágenes internas).
 - **Control de rango de capítulos**: `--start <num> --end <num>` para bajar solo un tramo concreto.
 - **Flag `--next` explícito** para avanzar de tomo (hoy la re-ejecución con `--resume` ya avanza).
-- **Multi-idioma destino** (`--target <lang>`) en vez de fijar `es`; auto-detección de idioma origen vía la respuesta del endpoint.
+- **Auto-detección de idioma origen** vía la respuesta del endpoint (hoy se envía `source=auto`).
 - **Más métricas en el manifest**: fecha por fase, número de EPUB, versión del esquema → migraciones suaves.
 
 ### Bajas / experimentales

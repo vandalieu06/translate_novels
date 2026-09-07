@@ -36,6 +36,11 @@ EMPTY_PLACEHOLDER_EN = "(Chapter content not available - retry later.)"
 EMPTY_PLACEHOLDER_ES = "(Capitulo sin contenido disponible - reintenta mas tarde.)"
 
 
+def _translated_placeholder(target: str) -> str:
+    """Placeholder para EPUBs traducidos: ES en espanol, neutro (EN) en el resto."""
+    return EMPTY_PLACEHOLDER_ES if target == "es" else EMPTY_PLACEHOLDER_EN
+
+
 class PipelineError(Exception):
     """Fallo al generar EPUB/manifest o estado inconsistente."""
 
@@ -52,6 +57,7 @@ async def run_pipeline(
     download_all: bool = False,
     translate_pending: bool = False,
     translate_concurrency: int = 1,
+    target: str | None = None,
     fetcher: Fetcher,
     adapter: SiteAdapter | None = None,
     translator: Translator | None = None,
@@ -69,6 +75,7 @@ async def run_pipeline(
             resume=resume,
             force=force,
             translate_concurrency=translate_concurrency,
+            target=target,
             translator=translator,
             on_status=on_status,
             on_translate_progress=on_translate_progress,
@@ -154,19 +161,21 @@ async def run_pipeline(
     if translate:
         if translator is None:
             raise PipelineError("se pidio traduccion sin un Translator")
+        target = target or manifest.translated_language or config.translate_target_default()
         if on_status:
-            on_status("Traduciendo a espanol")
+            on_status(f"Traduciendo a {target}")
         await translate_chapters(
             translator=translator,
             chapters=loaded,
             slug_dir=slug_dir,
             manifest=manifest,
+            target=target,
             force=force,
             concurrency=config.effective_translate_concurrency(translate_concurrency),
             on_progress=on_translate_progress,
         )
         translated = _build_epub_chapters(
-            loaded, slug_dir / "translated", EMPTY_PLACEHOLDER_ES
+            loaded, slug_dir / "translated", _translated_placeholder(target)
         )
         if on_status:
             on_status("Generando EPUB traducido")
@@ -176,7 +185,7 @@ async def run_pipeline(
             metadata=metadata,
             chapters=translated,
             volume_size=volume_size,
-            language="es",
+            language=target,
             translated=True,
             resume=resume,
             force=force,
@@ -185,6 +194,7 @@ async def run_pipeline(
         )
         manifest.epub_translated = es_names
         manifest.translated = True
+        manifest.translated_language = target
         refresh_empty_counts(slug_dir / "raw", manifest)
         manifest.save(slug_dir)
 
@@ -212,7 +222,7 @@ def _generate_epubs(
 ) -> list[str]:
     base = title_to_filename(metadata.title) or manifest.slug
     volumes = generate_volumes(chapters, volume_size)
-    suffix = " (ES)" if translated else ""
+    suffix = f" ({language.upper()})" if translated else ""
     names: list[str] = []
     for index, volume in enumerate(volumes, start=1):
         if volume_size is None:
@@ -387,6 +397,7 @@ async def _run_translate_pending(
     resume: bool,
     force: bool,
     translate_concurrency: int = 1,
+    target: str | None = None,
     translator: Translator | None,
     on_status: StatusCallback | None,
     on_translate_progress: ProgressCallback | None,
@@ -400,19 +411,21 @@ async def _run_translate_pending(
     if not raw_chapters:
         raise PipelineError("no hay capitulos descargados en disco")
 
+    target = target or manifest.translated_language or config.translate_target_default()
     if on_status:
-        on_status("Traduciendo capitulos pendientes (sin descargar)")
+        on_status(f"Traduciendo capitulos pendientes a {target} (sin descargar)")
     await translate_chapters(
         translator=translator,
         chapters=raw_chapters,
         slug_dir=slug_dir,
         manifest=manifest,
+        target=target,
         force=force,
         concurrency=config.effective_translate_concurrency(translate_concurrency),
         on_progress=on_translate_progress,
     )
     translated = _build_epub_chapters(
-        raw_chapters, slug_dir / "translated", EMPTY_PLACEHOLDER_ES
+        raw_chapters, slug_dir / "translated", _translated_placeholder(target)
     )
     metadata = NovelMetadata(
         title=manifest.title,
@@ -426,7 +439,7 @@ async def _run_translate_pending(
         metadata=metadata,
         chapters=translated,
         volume_size=manifest.volume_size,
-        language="es",
+        language=target,
         translated=True,
         resume=resume,
         force=force,
@@ -435,6 +448,7 @@ async def _run_translate_pending(
     )
     manifest.epub_translated = es_names
     manifest.translated = True
+    manifest.translated_language = target
     refresh_empty_counts(slug_dir / "raw", manifest)
     _cleanup_orphan_epubs(
         slug_dir,
@@ -489,15 +503,16 @@ def rebuild_volumes(slug_dir: Path, volume_size: int | None) -> Manifest:
 
     translated_dir = slug_dir / "translated"
     if manifest.translated or any(translated_dir.glob("*.md")):
+        lang = manifest.translated_language or config.translate_target_default()
         es_names = _generate_epubs(
             slug_dir=slug_dir,
             manifest=manifest,
             metadata=metadata,
             chapters=_build_epub_chapters(
-                raw_chapters, translated_dir, EMPTY_PLACEHOLDER_ES
+                raw_chapters, translated_dir, _translated_placeholder(lang)
             ),
             volume_size=volume_size,
-            language="es",
+            language=lang,
             translated=True,
             resume=True,
             force=False,

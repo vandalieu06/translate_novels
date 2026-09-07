@@ -1,0 +1,156 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Novela · novel-cli web</title>
+  <link
+    rel="icon"
+    href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%23fa6f78'/%3E%3Ctext x='16' y='22' font-family='Arial' font-size='16' font-weight='700' fill='%23fff' text-anchor='middle'%3EN%3C/text%3E%3C/svg%3E"
+  />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link
+    href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+JP:wght@200;400;500;700&display=swap"
+    rel="stylesheet"
+  />
+  <link rel="stylesheet" href="/static/css/app.css" />
+</head>
+<body data-page="novel">
+  <header class="site-header">
+    <div class="container">
+      <a class="brand" href="/">
+        <span class="logo">N</span>
+        novel<span>-cli</span>
+      </a>
+      <nav id="main-nav">
+        <a href="/" data-nav="landing">Descargar</a>
+        <a href="/biblioteca" data-nav="library">Biblioteca</a>
+        <a href="/ayuda" data-nav="help">Ayuda</a>
+      </nav>
+      <div class="spacer"></div>
+      <span class="backend-pill" id="backend-pill" hidden></span>
+      <div class="server-status" id="server-status">
+        <span class="dot"></span><span id="server-status-text">Servidor OK</span>
+      </div>
+    </div>
+  </header>
+
+  <section class="section novel-hero" id="novel-hero">
+    <div class="container">
+      <div class="novel-hero-grid">
+        <div class="novel-cover-wrap" id="novel-cover">
+          <div class="empty">Cargando...</div>
+        </div>
+        <div class="novel-info">
+          <a class="back-link" href="/biblioteca">&larr; Biblioteca</a>
+          <h1 id="novel-title">Cargando...</h1>
+          <div class="novel-author" id="novel-author"></div>
+          <div class="novel-meta" id="novel-meta"></div>
+          <div class="novel-progress" id="novel-progress"></div>
+          <div id="novel-empty-warning"></div>
+          <div class="novel-actions" id="novel-actions"></div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="section" id="novel-job" hidden>
+    <div class="container">
+      <div class="job-progress card visible" id="job-progress">
+        <div class="job-head">
+          <span class="job-url" id="job-progress-url"></span>
+          <span class="badge badge-info" id="job-state-badge">en curso</span>
+        </div>
+        <div class="phases">
+          <div class="phase">
+            <span class="phase-icon">&#11015;</span>
+            <span class="phase-label">Descarga</span>
+            <div class="bar"><div class="bar-fill" id="bar-download"></div></div>
+            <span class="count" id="count-download">0/0</span>
+          </div>
+          <div class="phase">
+            <span class="phase-icon">&#127760;</span>
+            <span class="phase-label">Traducción</span>
+            <div class="bar"><div class="bar-fill" id="bar-translate"></div></div>
+            <span class="count" id="count-translate">0/0</span>
+          </div>
+          <div class="phase">
+            <span class="phase-icon">&#128196;</span>
+            <span class="phase-label">EPUB</span>
+            <div class="bar"><div class="bar-fill" id="bar-epub"></div></div>
+            <span class="count" id="count-epub">0/0</span>
+          </div>
+        </div>
+        <div class="status-line" id="status-line"></div>
+        <div class="cancel-row">
+          <button class="btn btn-secondary" id="cancel-btn">Cancelar</button>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="section" id="novel-epubs">
+    <div class="container">
+      <div class="section-header">
+        <div class="kicker">Archivos</div>
+        <h2>EPUBs generados</h2>
+        <p class="section-desc">Descarga los tomos generados. La versión traducida aparece etiquetada con su idioma (p. ej. ES).</p>
+      </div>
+      <div id="epub-groups">
+        <div class="empty">Cargando...</div>
+      </div>
+    </div>
+  </section>
+
+  <footer class="site-footer">
+    <div class="container">
+      <span class="foot-brand">novel-cli web</span>
+      <span>FastAPI + UI responsive · diseño MOSH</span>
+    </div>
+  </footer>
+
+  <div class="modal-overlay" id="translate-modal" hidden>
+    <div class="modal" role="dialog" aria-modal="true" aria-labelledby="translate-modal-title">
+      <div class="modal-head">
+        <h3 id="translate-modal-title">Idioma de traducción</h3>
+        <span class="modal-title-sub" id="translate-modal-novel"></span>
+        <button type="button" class="modal-close" id="translate-modal-close" aria-label="Cerrar">&times;</button>
+      </div>
+      <p class="modal-desc">Elige el idioma al que traducir la novela. Los capítulos pendientes se traducen y se genera el EPUB traducido (se conserva el original).</p>
+      <div class="pill-group" id="translate-pills"></div>
+      <div class="modal-actions">
+        <button type="button" class="btn btn-secondary" id="translate-modal-cancel">Cancelar</button>
+        <button type="button" class="btn btn-primary" id="translate-modal-apply" disabled>Traducir</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="modal-overlay" id="volume-modal" hidden>
+    <div class="modal" role="dialog" aria-modal="true" aria-labelledby="volume-modal-title">
+      <div class="modal-head">
+        <h3 id="volume-modal-title">Tamaño de tomo</h3>
+        <span class="modal-title-sub" id="volume-modal-novel"></span>
+        <button type="button" class="modal-close" id="volume-modal-close" aria-label="Cerrar">&times;</button>
+      </div>
+      <p class="modal-desc">Elige cuántos capítulos por tomo. Los EPUBs (original y traducido) se reconstruyen con el nuevo tamaño.</p>
+      <div class="pill-group" id="volume-pills">
+        <button type="button" class="pill" data-size="50">50</button>
+        <button type="button" class="pill" data-size="100">100</button>
+        <button type="button" class="pill" data-size="150">150</button>
+        <button type="button" class="pill" data-size="200">200</button>
+        <button type="button" class="pill" data-size="null">ALL</button>
+      </div>
+      <div class="modal-actions">
+        <button type="button" class="btn btn-secondary" id="volume-modal-cancel">Cancelar</button>
+        <button type="button" class="btn btn-primary" id="volume-modal-apply" disabled>Regenerar</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="toast"></div>
+  <script src="/static/js/common.js"></script>
+  <script src="/static/js/jobs.js"></script>
+  <script src="/static/js/novel.js"></script>
+</body>
+</html>

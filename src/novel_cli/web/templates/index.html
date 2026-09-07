@@ -16,16 +16,17 @@
   />
   <link rel="stylesheet" href="/static/css/app.css" />
 </head>
-<body>
+<body data-page="landing">
   <header class="site-header">
     <div class="container">
-      <div class="brand">
+      <a class="brand" href="/">
         <span class="logo">N</span>
         novel<span>-cli</span>
-      </div>
+      </a>
       <nav id="main-nav">
-        <a href="#descargar" class="active">Descargar</a>
-        <a href="#biblioteca">Biblioteca</a>
+        <a href="/" data-nav="landing">Descargar</a>
+        <a href="/biblioteca" data-nav="library">Biblioteca</a>
+        <a href="/ayuda" data-nav="help">Ayuda</a>
       </nav>
       <div class="spacer"></div>
       <span class="backend-pill" id="backend-pill" hidden></span>
@@ -53,7 +54,7 @@
       <div class="section-header">
         <div class="kicker">Descarga</div>
         <h2>Nueva descarga</h2>
-        <p class="section-desc">Introduce la URL de la novela y lanza la descarga. El progreso se muestra en vivo.</p>
+        <p class="section-desc">Introduce la URL de la novela y lanza la descarga. El progreso se muestra en vivo. ¿Dudas? Consulta la <a href="/ayuda">guía de acciones</a>.</p>
       </div>
 
       <form class="card job-form" id="job-form">
@@ -81,14 +82,18 @@
           </div>
         </div>
         <div class="checkbox-group">
-          <label><input type="checkbox" id="job-translate" /> Traducir a español (ES)</label>
+          <label><input type="checkbox" id="job-translate" /> Traducir</label>
           <label><input type="checkbox" id="job-all" /> Todos los capítulos</label>
           <label><input type="checkbox" id="job-pending" /> Traducir pendientes</label>
           <label><input type="checkbox" id="job-force" /> Forzar re-descarga</label>
           <label><input type="checkbox" id="job-playwright" /> Forzar Playwright</label>
         </div>
+        <div class="field translate-lang-field" id="field-language" hidden>
+          <label for="job-language">Idioma de traducción</label>
+          <select id="job-language"></select>
+        </div>
         <div class="form-actions">
-          <button type="submit" class="btn btn-primary btn-lg" id="job-submit">
+          <button type="submit" class="btn btn-primary btn-lg" id="job-submit" data-label="Lanzar descarga" data-loading="Lanzando...">
             <span class="spinner"></span>
             <span class="btn-label">Lanzar descarga</span>
           </button>
@@ -129,14 +134,17 @@
     </div>
   </section>
 
-  <section class="section" id="biblioteca">
+  <section class="section" id="recientes">
     <div class="container">
-      <div class="section-header">
-        <div class="kicker">Biblioteca</div>
-        <h2>Tus novelas</h2>
-        <p class="section-desc">Novelas ya descargadas, con progreso y enlaces para descargar los EPUB.</p>
+      <div class="section-header header-with-action">
+        <div>
+          <div class="kicker">Biblioteca</div>
+          <h2>Recientes</h2>
+          <p class="section-desc">Tus novelas más actualizadas. Toca una portada para ver su ficha y acciones.</p>
+        </div>
+        <a class="btn btn-secondary" href="/biblioteca">Ver biblioteca completa</a>
       </div>
-      <div class="novel-list" id="novel-list">
+      <div class="cover-grid" id="recent-list">
         <div class="empty">Cargando...</div>
       </div>
     </div>
@@ -149,29 +157,9 @@
     </div>
   </footer>
 
-  <div class="modal-overlay" id="volume-modal" hidden>
-    <div class="modal" role="dialog" aria-modal="true" aria-labelledby="volume-modal-title">
-      <div class="modal-head">
-        <h3 id="volume-modal-title">Tamaño de tomo</h3>
-        <span class="modal-title-sub" id="volume-modal-novel"></span>
-        <button type="button" class="modal-close" id="volume-modal-close" aria-label="Cerrar">&times;</button>
-      </div>
-      <p class="modal-desc">Elige cuántos capítulos por tomo. Los EPUBs (original y traducido) se reconstruyen con el nuevo tamaño.</p>
-      <div class="pill-group" id="volume-pills">
-        <button type="button" class="pill" data-size="50">50</button>
-        <button type="button" class="pill" data-size="100">100</button>
-        <button type="button" class="pill" data-size="150">150</button>
-        <button type="button" class="pill" data-size="200">200</button>
-        <button type="button" class="pill" data-size="null">ALL</button>
-      </div>
-      <div class="modal-actions">
-        <button type="button" class="btn btn-secondary" id="volume-modal-cancel">Cancelar</button>
-        <button type="button" class="btn btn-primary" id="volume-modal-apply" disabled>Regenerar</button>
-      </div>
-    </div>
-  </div>
-
   <div id="toast"></div>
+  <script src="/static/js/common.js"></script>
+  <script src="/static/js/jobs.js"></script>
   <script src="/static/js/app.js"></script>
 </body>
 </html>

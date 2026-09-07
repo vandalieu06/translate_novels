@@ -38,7 +38,7 @@ def _make_run_app() -> typer.Typer:
     app = typer.Typer(
         name="novel-cli",
         help="Descarga web novels y las convierte a EPUB, con traduccion "
-        "opcional a espanol.",
+        "opcional a un idioma elegible (default es).",
         no_args_is_help=True,
         add_completion=False,
     )
@@ -64,9 +64,18 @@ def _make_run_app() -> typer.Typer:
             bool,
             typer.Option(
                 "--translate", "-t",
-                help="Traducir a espanol y generar EPUB traducido ademas del original",
+                help="Traducir al idioma destino y generar EPUB traducido ademas del original",
             ),
         ] = False,
+        target: Annotated[
+            str,
+            typer.Option(
+                "--target",
+                help="Idioma destino de la traduccion (default: "
+                f"{config.translate_target_default()}; "
+                f"disponibles: {', '.join(config.TRANSLATE_TARGET_LANGUAGES)})",
+            ),
+        ] = config.translate_target_default(),
         resume: Annotated[
             bool,
             typer.Option(
@@ -132,6 +141,12 @@ def _make_run_app() -> typer.Typer:
             _fail("--concurrency debe ser >= 1", EXIT_VALIDATION)
         if translate_concurrency < 1:
             _fail("--translate-concurrency debe ser >= 1", EXIT_VALIDATION)
+        if target not in config.TRANSLATE_TARGET_LANGUAGES:
+            _fail(
+                f"--target no soportado: {target} (disponibles: "
+                f"{', '.join(config.TRANSLATE_TARGET_LANGUAGES)})",
+                EXIT_VALIDATION,
+            )
 
         error_console = Console(stderr=True)
         if verbose:
@@ -166,6 +181,7 @@ def _make_run_app() -> typer.Typer:
                             download_all=all_chapters,
                             translate_pending=translate_pending,
                             translate_concurrency=translate_concurrency,
+                            target=target,
                             fetcher=fetcher,
                             translator=translator,
                             on_status=ui.status,
@@ -173,7 +189,7 @@ def _make_run_app() -> typer.Typer:
                                 "download", "Descargando capitulos"
                             ),
                             on_translate_progress=ui.callback(
-                                "translate", "Traduciendo a espanol"
+                                "translate", f"Traduciendo a {target}"
                             ),
                             on_epub_progress=ui.callback(
                                 "epub", "Generando EPUBs"

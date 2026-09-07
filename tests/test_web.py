@@ -355,3 +355,188 @@ def test_volume_size_all_single(monkeypatch, tmp_path):
     )
     assert res.status_code == 200
     assert res.json()["volume_size"] is None
+
+
+def test_library_served(monkeypatch, tmp_path):
+    client = _client(monkeypatch, tmp_path)
+    res = client.get("/biblioteca")
+    assert res.status_code == 200
+    assert "cover-grid" in res.text
+
+
+def test_ayuda_served(monkeypatch, tmp_path):
+    client = _client(monkeypatch, tmp_path)
+    res = client.get("/ayuda")
+    assert res.status_code == 200
+    assert "Qué hace cada acción" in res.text
+
+
+def test_novela_page_served(monkeypatch, tmp_path):
+    client = _client(monkeypatch, tmp_path)
+    res = client.get("/novela/novela")
+    assert res.status_code == 200
+    assert "novel-cover" in res.text
+    assert "epub-groups" in res.text
+
+
+def test_retranslate_with_target_language(monkeypatch, tmp_path):
+    slug_dir = tmp_path / "novela"
+    slug_dir.mkdir()
+    Manifest(
+        slug="novela",
+        title="Novela",
+        source_url="https://example.com/novel",
+    ).save(slug_dir)
+
+    captured: dict[str, Any] = {}
+
+    async def fake(**kwargs: Any) -> Manifest:
+        captured.update(kwargs)
+        return Manifest(slug="novela", title="Novela")
+
+    monkeypatch.setattr("novel_cli.web.jobs.run_pipeline", fake)
+    client = TestClient(create_app(output_dir=tmp_path))
+
+    res = client.post(
+        "/api/novels/novela/retranslate", json={"target_language": "fr"}
+    )
+    assert res.status_code == 200
+    assert captured["target"] == "fr"
+    assert captured["force"] is True
+
+
+def test_retranslate_defaults_to_manifest_language(monkeypatch, tmp_path):
+    slug_dir = tmp_path / "novela"
+    slug_dir.mkdir()
+    Manifest(
+        slug="novela",
+        title="Novela",
+        source_url="https://example.com/novel",
+        translated=True,
+        translated_language="fr",
+    ).save(slug_dir)
+
+    captured: dict[str, Any] = {}
+
+    async def fake(**kwargs: Any) -> Manifest:
+        captured.update(kwargs)
+        return Manifest(slug="novela", title="Novela")
+
+    monkeypatch.setattr("novel_cli.web.jobs.run_pipeline", fake)
+    client = TestClient(create_app(output_dir=tmp_path))
+
+    res = client.post("/api/novels/novela/retranslate")
+    assert res.status_code == 200
+    assert captured["target"] == "fr"
+    assert captured["force"] is False
+
+
+def test_retranslate_invalid_target_rejected(monkeypatch, tmp_path):
+    slug_dir = tmp_path / "novela"
+    slug_dir.mkdir()
+    Manifest(
+        slug="novela",
+        title="Novela",
+        source_url="https://example.com/novel",
+    ).save(slug_dir)
+    client = _client(monkeypatch, tmp_path)
+    res = client.post(
+        "/api/novels/novela/retranslate", json={"target_language": "xx"}
+    )
+    assert res.status_code == 400
+
+
+def test_sync_inherits_translated_language(monkeypatch, tmp_path):
+    slug_dir = tmp_path / "novela"
+    slug_dir.mkdir()
+    Manifest(
+        slug="novela",
+        title="Novela",
+        source_url="https://example.com/novel",
+        translated=True,
+        translated_language="fr",
+    ).save(slug_dir)
+
+    captured: dict[str, Any] = {}
+
+    async def fake(**kwargs: Any) -> Manifest:
+        captured.update(kwargs)
+        return Manifest(slug="novela", title="Novela")
+
+    monkeypatch.setattr("novel_cli.web.jobs.run_pipeline", fake)
+    client = TestClient(create_app(output_dir=tmp_path))
+
+    res = client.post("/api/novels/novela/sync")
+    assert res.status_code == 200
+    assert captured["target"] == "fr"
+    assert captured["translate"] is True
+
+
+def test_payload_exposes_translated_language(monkeypatch, tmp_path):
+    slug_dir = tmp_path / "novela"
+    slug_dir.mkdir()
+    Manifest(
+        slug="novela",
+        title="Novela",
+        translated=True,
+        translated_language="fr",
+    ).save(slug_dir)
+    slug2_dir = tmp_path / "otra"
+    slug2_dir.mkdir()
+    Manifest(slug="otra", title="Otra").save(slug2_dir)
+
+    client = _client(monkeypatch, tmp_path)
+    novels = client.get("/api/novels").json()
+    by_slug = {n["slug"]: n for n in novels}
+    assert by_slug["novela"]["translated_language"] == "fr"
+    assert by_slug["otra"]["translated_language"] is None
+
+
+def test_config_exposes_translate_languages(monkeypatch, tmp_path):
+    client = _client(monkeypatch, tmp_path)
+    data = client.get("/api/config").json()
+    assert data["default_translate_target"] == "es"
+    assert data["translate_languages"]["fr"] == "Français"
+    assert "es" in data["translate_languages"]
+
+
+def test_create_job_with_target_language(monkeypatch, tmp_path):
+    captured: dict[str, Any] = {}
+
+    async def fake(**kwargs: Any) -> Manifest:
+        captured.update(kwargs)
+        return Manifest(slug="novela", title="Novela")
+
+    monkeypatch.setattr("novel_cli.web.jobs.run_pipeline", fake)
+    client = TestClient(create_app(output_dir=tmp_path))
+
+    res = client.post(
+        "/api/jobs",
+        json={"url": "https://example.com/novel", "translate": True, "target_language": "fr"},
+    )
+    assert res.status_code == 200
+    assert captured["target"] == "fr"
+
+
+def test_create_job_invalid_target_rejected(monkeypatch, tmp_path):
+    client = _client(monkeypatch, tmp_path)
+    res = client.post(
+        "/api/jobs",
+        json={"url": "https://example.com/novel", "translate": True, "target_language": "xx"},
+    )
+    assert res.status_code == 400
+
+
+def test_pages_public_with_auth(monkeypatch, tmp_path):
+    import os
+
+    os.environ["NOVEL_WEB_TOKEN"] = "sekret"
+    try:
+        client = TestClient(create_app(output_dir=tmp_path))
+        assert client.get("/").status_code == 200
+        assert client.get("/biblioteca").status_code == 200
+        assert client.get("/ayuda").status_code == 200
+        assert client.get("/novela/novela").status_code == 200
+        assert client.get("/api/novels").status_code == 401
+    finally:
+        os.environ.pop("NOVEL_WEB_TOKEN", None)

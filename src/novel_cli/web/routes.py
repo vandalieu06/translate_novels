@@ -19,6 +19,7 @@ class JobRequest(BaseModel):
     output: str | None = None
     volume_size: int | None = 50
     translate: bool = False
+    target_language: str | None = None
     resume: bool = True
     force: bool = False
     all: bool = False
@@ -26,6 +27,10 @@ class JobRequest(BaseModel):
     translate_concurrency: int | None = None
     playwright: bool = False
     concurrency: int = config.DEFAULT_CONCURRENCY
+
+
+class RetranslateRequest(BaseModel):
+    target_language: str | None = None
 
 
 class VolumeSizeRequest(BaseModel):
@@ -68,6 +73,14 @@ def build_router(manager: JobManager) -> APIRouter:
         if req.translate_concurrency is not None and req.translate_concurrency < 1:
             raise HTTPException(
                 status_code=400, detail="translate_concurrency debe ser >= 1"
+            )
+        if (
+            req.translate
+            and req.target_language is not None
+            and not config.is_valid_translate_target(req.target_language)
+        ):
+            raise HTTPException(
+                status_code=400, detail="target_language no soportado"
             )
         output_dir = (
             Path(req.output).expanduser() if req.output else None
@@ -148,7 +161,9 @@ def build_router(manager: JobManager) -> APIRouter:
         return FileResponse(path)
 
     @router.post("/novels/{slug}/retranslate")
-    async def retranslate_novel(slug: str) -> dict[str, str]:
+    async def retranslate_novel(
+        slug: str, req: RetranslateRequest | None = None
+    ) -> dict[str, str]:
         output_dir = manager.default_output_dir
         slug_dir = output_dir / slug
         manifest = Manifest.load(slug_dir)
@@ -158,6 +173,12 @@ def build_router(manager: JobManager) -> APIRouter:
             raise HTTPException(
                 status_code=400, detail="la novela no tiene una source_url valida"
             )
+        requested = req.target_language if req else None
+        current = manifest.translated_language or config.translate_target_default()
+        target = requested or current
+        if not config.is_valid_translate_target(target):
+            raise HTTPException(status_code=400, detail="target_language no soportado")
+        force = requested is not None and target != current
         job = manager.create(
             url=manifest.source_url,
             output_dir=output_dir,
@@ -166,11 +187,12 @@ def build_router(manager: JobManager) -> APIRouter:
                 "volume_size": manifest.volume_size,
                 "translate": True,
                 "resume": True,
-                "force": False,
+                "force": force,
                 "all": False,
                 "translate_pending": True,
                 "playwright": False,
                 "concurrency": config.DEFAULT_CONCURRENCY,
+                "target_language": target,
             },
         )
         return {"job_id": job.id}
@@ -220,6 +242,7 @@ def build_router(manager: JobManager) -> APIRouter:
                 "translate_pending": False,
                 "playwright": False,
                 "concurrency": config.DEFAULT_CONCURRENCY,
+                "target_language": manifest.translated_language,
             },
         )
         return {"job_id": job.id}
@@ -244,6 +267,7 @@ def _novel_payload(slug_dir: Path, manifest: Manifest) -> dict[str, object]:
         "chapters_empty": manifest.chapters_empty,
         "chapters_empty_nums": manifest.chapters_empty_nums,
         "translated": manifest.translated,
+        "translated_language": manifest.translated_language,
         "volume_size": manifest.volume_size,
         "cover": cover,
         "epub_original": manifest.epub_original,
