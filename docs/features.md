@@ -87,4 +87,4 @@
 
 ---
 
-Ver también: [uso del CLI](uso.md) y [arquitectura](arquitectura.md).
+Ver también: [uso del CLI](uso.md) y [arquitectura](arquitectura.md) (incluye diagramas Mermaid de dependencias, pipeline, red y ciclo de vida del capítulo).

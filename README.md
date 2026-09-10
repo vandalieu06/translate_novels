@@ -52,7 +52,7 @@ Salida por novela: `output/<slug>/` con `.manifest.json`, `raw/`, `translated/` 
 ## Documentación
 
 - **[Uso detallado](docs/uso.md)** — flags, ejemplos, estructura de salida, reanudación, códigos de salida y traducción.
-- **[Arquitectura](docs/arquitectura.md)** — diseño técnico, módulos, flujo de datos, estado, red/retry, EPUB, errores y testing.
+- **[Arquitectura](docs/arquitectura.md)** — diseño técnico, módulos, flujo de datos, estado, red/retry, EPUB, errores y testing (con diagramas Mermaid).
 - **[Features](docs/features.md)** — funcionalidades actuales y roadmap de posibles mejoras.
 
 ## Desarrollo

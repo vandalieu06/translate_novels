@@ -55,40 +55,38 @@ translate_novels/
 
 ## 3. Flujo de dependencias
 
-```
-cli/app.py ── run ─────────────────────┐
-web/app.py ── create_app()             │  (construye fetcher/translator,
-   └─ web/jobs.py ── run_pipeline ─────┤   conecta callbacks de progreso)
-                                       ▼
-core/services/pipeline.py ── run_pipeline()
-   ├─ core/scraper/registry.py  → adaptador por dominio
-   ├─ core/services/toc.py      → SiteMetadata (metadatos + capítulos)
-   ├─ core/services/download.py → pool async + raw/<NNNN>.md + cover
-   ├─ core/services/epub.py     → EPUB original (volúmenes)
-   ├─ core/services/translate.py→ translated/<NNNN>.md + EPUB traducido
-   └─ core/models/state.py      → .manifest.json (estado/reanudación)
+```mermaid
+flowchart TD
+    CLI["cli/app.py<br/>run"] -->|construye deps + callbacks| PIPE
+    WEB["web/app.py<br/>create_app()"] --> JOBS["web/jobs.py<br/>JobManager"]
+    JOBS -->|run_pipeline| PIPE
+    PIPE["core/services/pipeline.py<br/>run_pipeline()"]
+    PIPE --> REG["core/scraper/registry.py<br/>adaptador por dominio"]
+    PIPE --> TOC["core/services/toc.py<br/>SiteMetadata (metadatos + capítulos)"]
+    PIPE --> DL["core/services/download.py<br/>pool async + raw/&lt;NNNN&gt;.md + cover"]
+    PIPE --> EPUB["core/services/epub.py<br/>EPUB original (volúmenes)"]
+    PIPE --> TR["core/services/translate.py<br/>translated/&lt;NNNN&gt;.md + EPUB traducido"]
+    PIPE --> STATE["core/models/state.py<br/>.manifest.json (estado/reanudación)"]
 ```
 
 `core` nunca importa `rich`: expone callbacks `on_status(str)` y `on_progress(done, total)` que la CLI conecta a `rich.progress` (`cli/progress.py`) y la web a eventos WebSocket (`web/jobs.py` → `web/ws.py`).
 
 ## 4. Flujo de datos (pipeline)
 
-```
-URL
- │ 1. get_adapter(url) → SiteAdapter (Novelfire | Generic)
- │ 2. fetch_site_metadata(fetcher, adapter, url)
- │      - tocs() → páginas de listado (paginación vía next_page)
- │      - parse_toc() → título, portada, autor, capítulos
- ▼
-slug = slugify(título)          → output/<slug>/
- │ 3. _download_batch()          → primer tomo pendiente (o todo con --all)
- │ 4. download_chapters()        → raw/<NNNN>.md (pool + pacer, resume/force)
- │ 5. _load_all_chapters()       → solo capítulos con archivo en disco
- │ 6. _generate_epubs()          → Novela 1-50.epub (escribe solo lo que falta)
- │ 7. [--translate] translate_chapters() → translated/<NNNN>.md
- │     _generate_epubs(es)        → Novela 1-50 (ES).epub
- ▼
-Manifest.save()                 → .manifest.json
+```mermaid
+flowchart TD
+    URL(["URL"]) --> A["1. get_adapter(url)<br/>SiteAdapter (Novelfire / Generic)"]
+    A --> B["2. fetch_site_metadata(fetcher, adapter, url)<br/>tocs() → páginas de listado (next_page)<br/>parse_toc() → título, portada, autor, capítulos"]
+    B --> SLUG["slug = slugify(título)<br/>output/&lt;slug&gt;/"]
+    SLUG --> D["3. _download_batch()<br/>primer tomo pendiente (o todo con --all)"]
+    D --> E["4. download_chapters()<br/>raw/&lt;NNNN&gt;.md (pool + pacer, resume/force)"]
+    E --> F["5. _load_all_chapters()<br/>solo capítulos con archivo en disco"]
+    F --> G["6. _generate_epubs()<br/>Novela 1-50.epub (solo lo que falta)"]
+    G --> H{"--translate?"}
+    H -->|sí| I["7. translate_chapters()<br/>translated/&lt;NNNN&gt;.md"]
+    I --> J["_generate_epubs(es)<br/>Novela 1-50 (ES).epub"]
+    H -->|no| K
+    J --> K["Manifest.save()<br/>.manifest.json"]
 ```
 
 ## 5. Componentes clave
@@ -172,6 +170,34 @@ class SiteAdapter(Protocol):
 - `PlaywrightFetcher` — **un único navegador persistente** (lazy, se lanza en el primer fetch), `wait_until="networkidle"`. Nada de `launch()` por llamada.
 - `FallbackFetcher` / `get_fetcher()` — HTTP primero; ante `FetchError` reenvía por Playwright; con `--playwright` fuerza PW directamente. Los fallos de PW se envuelven como `FetchError` (→ exit 2).
 
+Secuencia de una petición con clasificación de errores y fallback:
+
+```mermaid
+sequenceDiagram
+    participant P as pipeline / download
+    participant F as FallbackFetcher
+    participant H as HttpFetcher
+    participant G as CooldownGate + Pacer
+    participant W as PlaywrightFetcher
+    P->>F: fetch_html(url)
+    F->>H: intenta HTTP primero
+    H->>G: cool-down → pacer → request
+    alt 2xx
+        G-->>H: HTML
+        H-->>F: HTML
+    else transient (502/504/52x)
+        G-->>H: backoff (RETRY_TRANSIENT)
+        H->>H: reintento
+    else rate-limit (429/503)
+        G-->>H: Retry-After (tope 30 s)
+        H->>H: backoff y reintento
+    else FetchError
+        F->>W: reenvío por navegador persistente
+        W-->>F: HTML (networkidle)
+    end
+    F-->>P: HTML
+```
+
 `registry.py` → `get_adapter(url)`: mapa `{dominio: clase}` con `GenericAdapter` como fallback.
 
 Adaptadores (`sites/`):
@@ -207,6 +233,23 @@ En el pipeline (`pipeline.py`), `_generate_epubs` acepta `rebuild` (default `Fal
 - `translate_chapters(...)` — caché en `translated/<NNNN>.md`; solo traduce lo que falta; actualiza `manifest.chapters_translated`. **Paraleliza capítulos** con `concurrency` (patrón `asyncio.Semaphore` + `gather`, igual que la descarga); el `Pacer`/`CooldownGate` compartidos limitan el ritmo global de peticiones incluso en paralelo. Los capítulos **vacíos** (sin contenido en `raw/`) no se traducen ni se marcan como traducidos; un `translated/<NNNN>.md` **vacío** (heredado de cuando el raw estaba vacío) **no cuenta como ya traducido** — si el raw tiene contenido se re-traduce, y si el raw sigue vacío se limpia (para que el EPUB traducido no incluya capítulos en blanco).
 - `OllamaTranslator` — stub opcional (no es el backend por defecto).
 
+Decisión de caché por capítulo (no re-traduce lo ya hecho; un `translated/` vacío no cuenta):
+
+```mermaid
+sequenceDiagram
+    participant T as translate_chapters
+    participant C as translated/NNNN.md
+    participant X as Translator (Google / libre)
+    T->>C: ¿existe y no está vacío?
+    alt caché válida
+        C-->>T: se reutiliza (sin llamada)
+    else falta o vacío
+        T->>X: translate_paragraphs(target)
+        X-->>T: párrafos reensamblados 1:1
+        T->>C: escribe la traducción
+    end
+```
+
 **Idioma destino**: `config.TRANSLATE_TARGET_LANGUAGES` (código→etiqueta) es la lista curada (`es, en, fr, de, it, pt, ru, ja, ko, zh`); default `config.translate_target_default()` (env `NOVEL_TRANSLATE_TARGET`). El target viaja por `run_pipeline(..., target)` → `translate_chapters(target=...)` y se persiste en `manifest.translated_language` (compatible con manifests viejos: `translated=True` sin idioma ⇒ `es`). El sufijo de los EPUB traducidos y el `language=` del metadato usan el target (no `(ES)` fijo); `rebuild_volumes` los reconstruye con el idioma guardado.
 
 Concurrencia y protección (`core/config.py`): `translate_concurrency_default()` devuelve **1** para `google` y **4** para `libre` (o `NOVEL_TRANSLATE_CONCURRENCY` si se define). `effective_translate_concurrency(requested)` es la capa de protección: **fuerza 1** si el backend es `google` (evita rate-limit) y limita a `TRANSLATE_MAX_CONCURRENCY` (16) para `libre`. El pacer default es 1500 ms (google) / 250 ms (libre), sobrescribible por `NOVEL_TRANSLATE_PACER_MS`. Ambos se aplican en `run_pipeline` (y en `--translate-pending`).
@@ -231,7 +274,7 @@ Concurrencia y protección (`core/config.py`): `translate_concurrency_default()`
 Capa de presentación web (FastAPI + Uvicorn) que reutiliza `core` tal cual. `web/` no contiene lógica de dominio:
 
 - `jobs.py` — **JobManager**: cada job lanza `run_pipeline` como `asyncio.create_task` dentro del event loop de Uvicorn (un job activo a la vez). Construye su propio fetcher/translator por ejecución y los cierra en `finally`. Los callbacks `on_status`/`on_progress` del pipeline publican **eventos** (`{type, phase, done, total, message}`) a un buffer + suscriptores.
-- `routes.py` — API REST: `GET /api/jobs` (lista de jobs con su `state`, para que la UI detecte un job activo), `POST /api/jobs` (valida como el CLI; acepta `target_language`), `GET /api/jobs/{id}`, `POST /api/jobs/{id}/cancel`, `GET /api/novels`, `GET /api/novels/{slug}` (incluye `translated_language`), `GET /api/novels/{slug}/epub/{file}`, `GET /api/novels/{slug}/cover`, `POST /api/novels/{slug}/sync` (hereda idioma y tamaño de tomo), `POST /api/novels/{slug}/retranslate` (solo-traducción de pendientes con opciones del manifest; acepta `{target_language}` y **fuerza la re-traducción** si el idioma cambia), `POST /api/novels/{slug}/volume-size` (cambia el tamaño de tomo y reconstruye los EPUBs desde el disco), `GET /api/config` (incluye `translate_backend`, `translate_languages` y `default_translate_target`).
+- `routes.py` — API REST: `GET /api/jobs` (lista de jobs con su `state`, para que la UI detecte un job activo), `POST /api/jobs` (valida como el CLI; acepta `target_language`), `GET /api/jobs/{id}`, `POST /api/jobs/{id}/cancel`, `GET /api/novels`, `GET /api/novels/{slug}` (incluye `translated_language`), `GET /api/novels/{slug}/epub/{file}`, `GET /api/novels/{slug}/cover`, `POST /api/novels/{slug}/sync` (hereda idioma y tamaño de tomo), `POST /api/novels/{slug}/retranslate` (solo-traducción de pendientes con opciones del manifest; acepta `{target_language}` y **fuerza la re-traducción** si el idioma cambia), `POST /api/novels/{slug}/volume-size` (cambia el tamaño de tomo y reconstruye los EPUBs desde el disco), `POST /api/novels/{slug}/rebuild` (reconstruye los EPUBs con el mismo `volume_size`, sin cambiar nada: aplica mejoras del builder como la página final), `GET /api/config` (incluye `translate_backend`, `translate_languages` y `default_translate_target`).
 - `ws.py` — WebSocket `/api/jobs/{id}/ws`: reenvía los eventos del job al cliente (reusa el mismo mecanismo de callbacks que `rich`).
 - `app.py` — `create_app(output_dir)` monta static/templates y aplica auth opcional por token (`NOVEL_WEB_TOKEN`, cabecera `X-Auth-Token`). Sirve **4 páginas** (`GET /`, `/biblioteca`, `/ayuda` y `/novela/{slug}`). `main()` arranca Uvicorn (`--host`/`--port`/`--no-browser`).
 - `templates/` + `static/` — UI **multi-página** responsive sin build (CSS con tokens de `DESIGN.md` + JS vanilla por página): `index.html` (descarga + progreso + novelas recientes), `library.html` (grid de portadas), `novel.html` (ficha de novela con acciones y EPUBs) y `help.html` (guía estática de acciones). El JS se parte en módulos compartidos: `common.js` (auth/api/toast/config/escapeHtml), `jobs.js` (job lock, WebSocket + polling, panel de progreso, cancelar, sync/retraducción) y uno por página (`app.js`, `library.js`, `novel.js`). Las páginas leen los datos de la API existente; el slug de la ficha lo obtiene `novel.js` de la ruta.
@@ -258,6 +301,20 @@ Reglas:
 - `--force`: re-descarga y re-traduce todo.
 - `--no-resume`: no consulta el manifest, pero la existencia de archivos sigue evitando re-descargas.
 - Tras cada fase se escribe el manifest (`chapters_total`/`chapters_downloaded`/`chapters_translated` consistentes).
+
+Ciclo de vida de un capítulo (la existencia de archivo en disco manda; el manifest es caché):
+
+```mermaid
+stateDiagram-v2
+    [*] --> Pendiente: capítulo en el TOC
+    Pendiente --> Descargado: raw/NNNN.md con párrafos
+    Pendiente --> Vacio: el parser devuelve 0 párrafos
+    Vacio --> Descargado: reintento al final del lote
+    Vacio --> ReintentoPendiente: persisten vacíos (EMPTY_RETRIES)
+    ReintentoPendiente --> Descargado: re-ejecutar (un archivo vacío no cuenta)
+    Descargado --> Traducido: --translate / --translate-pending
+    Traducido --> [*]
+```
 
 ## 7. Errores y códigos de salida
 
