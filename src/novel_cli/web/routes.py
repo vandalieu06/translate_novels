@@ -218,6 +218,24 @@ def build_router(manager: JobManager) -> APIRouter:
             "epub_translated": manifest.epub_translated,
         }
 
+    @router.post("/novels/{slug}/rebuild")
+    async def rebuild_novel(slug: str) -> dict[str, object]:
+        output_dir = manager.default_output_dir
+        slug_dir = output_dir / slug
+        manifest = Manifest.load(slug_dir)
+        if manifest is None:
+            raise HTTPException(status_code=404, detail="novela no encontrada")
+        try:
+            manifest = rebuild_volumes(slug_dir, manifest.volume_size)
+        except PipelineError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        return {
+            "ok": True,
+            "volume_size": manifest.volume_size,
+            "epub_original": manifest.epub_original,
+            "epub_translated": manifest.epub_translated,
+        }
+
     @router.post("/novels/{slug}/sync")
     async def sync_novel(slug: str) -> dict[str, str]:
         output_dir = manager.default_output_dir

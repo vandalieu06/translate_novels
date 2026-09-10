@@ -78,6 +78,10 @@ function renderActions(n) {
     <button class="btn btn-secondary btn-volumes" data-slug="${slug}" data-title="${title}" data-size="${volumeSize}">
       <span class="volumes-icon">&#128196;</span><span class="btn-label">Tomos ${volumeSize}</span>
     </button>`);
+  actions.push(`
+    <button class="btn btn-secondary btn-rebuild" data-slug="${slug}" data-title="${title}" data-label="Regenerar EPUBs" data-loading="Regenerando...">
+      <span class="rebuild-icon">&#9851;</span><span class="btn-label">Regenerar EPUBs</span>
+    </button>`);
   if (n.source_url) {
     actions.push(`<a class="btn btn-secondary" href="${escapeHtml(n.source_url)}" target="_blank" rel="noopener">Fuente</a>`);
   }
@@ -171,6 +175,25 @@ async function applyTranslate() {
   }
 }
 
+/* ---------- Regenerar EPUBs (sin cambiar tamaño) ---------- */
+async function rebuildNovel(btn) {
+  if (await hasActiveJob()) {
+    showToast("Ya hay un job en curso. Espera a que termine.", "info");
+    return;
+  }
+  const slug = btn.dataset.slug;
+  setButtonLoading(btn, true);
+  try {
+    await api(`/api/novels/${slug}/rebuild`, { method: "POST" });
+    showToast("EPUBs regenerados", "success");
+    refreshNovels();
+  } catch (e) {
+    showToast(e.message, "error");
+  } finally {
+    setButtonLoading(btn, false);
+  }
+}
+
 /* ---------- Modal de tamaño de tomo ---------- */
 let volumeState = { slug: null, size: null };
 
@@ -243,6 +266,8 @@ document.addEventListener("DOMContentLoaded", async () => {
         volumesBtn.dataset.size === "ALL" ? null : parseInt(volumesBtn.dataset.size, 10),
       );
     }
+    const rebuildBtn = event.target.closest(".btn-rebuild");
+    if (rebuildBtn) rebuildNovel(rebuildBtn);
   });
   $("#cancel-btn").addEventListener("click", cancelJob);
   $("#cancel-btn").style.display = "none";

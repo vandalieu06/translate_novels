@@ -6,6 +6,7 @@ Se mocks run_pipeline en web.jobs para no tocar la red ni el pipeline real.
 from __future__ import annotations
 
 import asyncio
+import zipfile
 from typing import Any
 
 from fastapi.testclient import TestClient
@@ -355,6 +356,41 @@ def test_volume_size_all_single(monkeypatch, tmp_path):
     )
     assert res.status_code == 200
     assert res.json()["volume_size"] is None
+
+
+def test_rebuild_not_found(monkeypatch, tmp_path):
+    client = _client(monkeypatch, tmp_path)
+    assert client.post("/api/novels/inexistente/rebuild").status_code == 404
+
+
+def test_rebuild_regenerates_epubs_with_end_page(monkeypatch, tmp_path):
+    client = _client(monkeypatch, tmp_path)
+    slug_dir = tmp_path / "novela"
+    slug_dir.mkdir()
+    Manifest(
+        slug="novela", title="Novela", source_url="https://example.com/novel",
+        volume_size=50, chapters_downloaded=3,
+    ).save(slug_dir)
+    raw = slug_dir / "raw"
+    raw.mkdir()
+    for i in range(1, 4):
+        raw.joinpath(f"{i:04d}.md").write_text(
+            f"# Chapter {i}\n\nContent {i}\n", encoding="utf-8"
+        )
+
+    res = client.post("/api/novels/novela/rebuild")
+    assert res.status_code == 200
+    body = res.json()
+    assert body["ok"] is True
+    assert body["volume_size"] == 50
+    assert body["epub_original"] == ["Novela 1-3.epub"]
+
+    manifest = Manifest.load(slug_dir)
+    assert manifest is not None
+    assert manifest.volume_size == 50
+
+    with zipfile.ZipFile(slug_dir / "Novela 1-3.epub") as zf:
+        assert "EPUB/end.xhtml" in zf.namelist()
 
 
 def test_library_served(monkeypatch, tmp_path):
