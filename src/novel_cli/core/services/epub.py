@@ -54,6 +54,7 @@ def build_epub(
     chapters: list[Chapter],
     cover_path: str | None,
     translated: bool = False,
+    include_end_page: bool = True,
 ) -> bytes:
     """Construye un EPUB a partir de capitulos (originales o ya traducidos)."""
     book = epub.EpubBook()
@@ -74,7 +75,20 @@ def build_epub(
     book.toc = tuple(epub_chapters)
     book.add_item(epub.EpubNcx())
     book.add_item(epub.EpubNav())
-    book.spine = [cover_html, "nav", *epub_chapters]
+    spine = [cover_html, "nav", *epub_chapters]
+    if include_end_page and chapters:
+        spine.append(
+            _add_end_page(
+                book,
+                title=title,
+                author=author,
+                language=language,
+                translated=translated,
+                start=chapters[0].num,
+                end=chapters[-1].num,
+            )
+        )
+    book.spine = spine
 
     buffer = io.BytesIO()
     epub.write_epub(buffer, book)
@@ -94,6 +108,36 @@ def _add_chapter(book: epub.EpubBook, chapter: Chapter, language: str) -> epub.E
         "<html xmlns=\"http://www.w3.org/1999/xhtml\">"
         f"<head><title>{html.escape(chapter.title)}</title></head>"
         f"<body><h1>{html.escape(chapter.title)}</h1>\n{paragraphs}</body></html>"
+    )
+    book.add_item(item)
+    return item
+
+
+def _add_end_page(
+    book: epub.EpubBook,
+    *,
+    title: str,
+    author: str | None,
+    language: str,
+    translated: bool,
+    start: int,
+    end: int,
+) -> epub.EpubHtml:
+    """Pagina final de cierre del tomo: FIN + ficha basica (oculta del TOC)."""
+    end_text = "FIN" if language.lower().startswith("es") else "THE END"
+    info = [html.escape(title), f"Capítulos {start}–{end}"]
+    if author:
+        info.append(f"por {html.escape(author)}")
+    if translated:
+        info.append(f"Traducido a {html.escape(language)}")
+    info_html = "".join(f"<p>{line}</p>" for line in info)
+    item = epub.EpubHtml(title="Fin", file_name="end.xhtml", lang=language)
+    item.content = (
+        '<html xmlns="http://www.w3.org/1999/xhtml">'
+        "<head><title>Fin</title></head>"
+        '<body style="text-align:center">'
+        f'<p style="margin-top:40%;font-size:2.5em;font-weight:bold">{end_text}</p>'
+        f"{info_html}</body></html>"
     )
     book.add_item(item)
     return item

@@ -190,7 +190,7 @@ Adaptadores (`sites/`):
 
 ### 5.5 EPUB (`core/services/epub.py`)
 
-- `build_epub(*, title, author, language, identifier, chapters, cover_path, translated=False) -> bytes` — genera `content.opf`, `toc.ncx`, `nav.xhtml`, un XHTML por capítulo (`<h1>` + un `<p>` por párrafo, 1:1), portada local (imagen) o SVG generado, `spine` ordenado por número, `language` correcto y `identifier` estable.
+- `build_epub(*, title, author, language, identifier, chapters, cover_path, translated=False, include_end_page=True) -> bytes` — genera `content.opf`, `toc.ncx`, `nav.xhtml`, un XHTML por capítulo (`<h1>` + un `<p>` por párrafo, 1:1), portada local (imagen) o SVG generado, `spine` ordenado por número, `language` correcto y `identifier` estable. Con `include_end_page` añade `end.xhtml` al final del spine: `FIN`/`THE END` según el idioma + ficha del tomo (título, rango `start–end`, autor, idioma de traducción si `translated`); la página queda **fuera del TOC**.
 - `stable_identifier(source_url)` — hash SHA-1 de la URL → `urn:novel-cli:<hash>` (re-imports deterministas).
 - `generate_volumes(chapters, volume_size)` — divide en `Volume(start, end, chapters)`; el último tomo puede ser corto; `None` → un solo volumen.
 

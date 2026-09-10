@@ -62,6 +62,8 @@ def test_build_epub_valid_zip_layout(tmp_path):
     # portada SVG si no hay imagen local
     assert "EPUB/cover.svg" in names
     assert "EPUB/cover.xhtml" in names
+    # pagina final de cierre
+    assert "EPUB/end.xhtml" in names
 
 
 def test_build_epub_metadata(tmp_path):
@@ -132,6 +134,70 @@ def test_build_epub_with_local_cover(tmp_path):
     assert 'media-type="image/png"' in opf
 
 
+def test_build_epub_end_page_spanish(tmp_path):
+    chapters = make_chapters(3)
+    zf = build_and_open(
+        title="Novela",
+        author="Autor",
+        language="es",
+        identifier="urn:x:1",
+        chapters=chapters,
+        cover_path=None,
+        translated=True,
+    )
+    end = zf.read("EPUB/end.xhtml").decode("utf-8")
+    assert "<p style=\"margin-top:40%;font-size:2.5em;font-weight:bold\">FIN</p>" in end
+    assert "Novela" in end
+    assert "Capítulos 1–3" in end
+    assert "por Autor" in end
+    assert "Traducido a es" in end
+
+
+def test_build_epub_end_page_english(tmp_path):
+    chapters = make_chapters(2)
+    zf = build_and_open(
+        title="Novel",
+        author=None,
+        language="en",
+        identifier="urn:x:1",
+        chapters=chapters,
+        cover_path=None,
+    )
+    end = zf.read("EPUB/end.xhtml").decode("utf-8")
+    assert ">THE END</p>" in end
+    assert "Traducido a" not in end
+
+
+def test_build_epub_end_page_escapes(tmp_path):
+    chapters = make_chapters(1)
+    zf = build_and_open(
+        title="A & B <C>",
+        author="D <E> & F",
+        language="es",
+        identifier="urn:x:1",
+        chapters=chapters,
+        cover_path=None,
+    )
+    end = zf.read("EPUB/end.xhtml").decode("utf-8")
+    assert "A &amp; B &lt;C&gt;" in end
+    assert "D &lt;E&gt; &amp; F" in end
+    assert "&<C>" not in end
+
+
+def test_build_epub_without_end_page(tmp_path):
+    chapters = make_chapters(3)
+    zf = build_and_open(
+        title="Novela",
+        author=None,
+        language="en",
+        identifier="urn:x:1",
+        chapters=chapters,
+        cover_path=None,
+        include_end_page=False,
+    )
+    assert "EPUB/end.xhtml" not in zf.namelist()
+
+
 def test_build_epub_readable_by_ebooklib(tmp_path):
     chapters = make_chapters(3)
     data = build_epub(
@@ -146,7 +212,7 @@ def test_build_epub_readable_by_ebooklib(tmp_path):
     out.write_bytes(data)
     book = epub.read_epub(str(out))
     assert book.get_metadata("DC", "title")[0][0] == "Novela"
-    assert len(list(book.get_items_of_type(ebooklib.ITEM_DOCUMENT))) == 5  # cover+nav+3
+    assert len(list(book.get_items_of_type(ebooklib.ITEM_DOCUMENT))) == 6  # cover+nav+3+fin
 
 
 def test_generate_volumes_none_single():
