@@ -14,6 +14,7 @@ from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 
 from novel_cli.core import config
+from novel_cli.logging_setup import configure_logging
 from novel_cli.web.jobs import JobManager
 from novel_cli.web.routes import build_router
 from novel_cli.web.ws import build_ws
@@ -96,6 +97,8 @@ def main() -> None:
         "--no-browser", action="store_true", help="No abrir el navegador al arrancar"
     )
     args = parser.parse_args()
+
+    configure_logging(output_dir=config.default_output())
 
     if not args.no_browser and not os.environ.get("NOVEL_WEB_NO_BROWSER"):
         import threading

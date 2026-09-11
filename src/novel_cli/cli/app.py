@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import sys
+import time
 from pathlib import Path
 from typing import Annotated, NoReturn
 from urllib.parse import urlsplit
@@ -14,6 +16,8 @@ from rich.traceback import install as install_traceback
 
 from novel_cli.cli.progress import ProgressUI
 from novel_cli.core import config
+from novel_cli.core.models.state import Manifest
+from novel_cli.core.models.toc import make_cache
 from novel_cli.core.scraper.fetcher import (
     CooldownGate,
     FetchError,
@@ -22,10 +26,16 @@ from novel_cli.core.scraper.fetcher import (
     PlaywrightFetcher,
     get_fetcher,
 )
+from novel_cli.core.scraper.registry import get_adapter
 from novel_cli.core.services.download import DownloadError
 from novel_cli.core.services.pipeline import PipelineError, run_pipeline
+from novel_cli.core.services.toc import crawl_toc
 from novel_cli.core.services.translate import TranslateError, build_default_translator
+from novel_cli.logging_setup import JOB_ID, configure_logging
 from novel_cli.notifications import build_default_notifier
+from novel_cli.run_history import RunRecord, append_run, record_from_manifest
+
+logger = logging.getLogger(__name__)
 
 EXIT_OK = 0
 EXIT_VALIDATION = 1
@@ -128,6 +138,13 @@ def _make_run_app() -> typer.Typer:
                 "1 para google, 4 para LibreTranslate local)",
             ),
         ] = config.translate_concurrency_default(),
+        refresh_toc: Annotated[
+            bool,
+            typer.Option(
+                "--refresh-toc",
+                help="Ignorar la cache del TOC y re-escanear el listado completo",
+            ),
+        ] = False,
         verbose: Annotated[
             bool,
             typer.Option("--verbose", "-V", help="Logs detallados"),
@@ -154,6 +171,37 @@ def _make_run_app() -> typer.Typer:
             install_traceback(console=error_console)
 
         output_dir = Path(output).expanduser() if output else config.default_output()
+        configure_logging(output_dir=output_dir, verbose=verbose)
+        JOB_ID.set("cli")
+        operation = "translate" if translate_pending else "download"
+        started = time.monotonic()
+
+        def _record(
+            status: str, *, manifest: object | None = None, error: str | None = None
+        ) -> None:
+            elapsed = time.monotonic() - started
+            try:
+                if manifest is not None:
+                    record = record_from_manifest(
+                        manifest,  # type: ignore[arg-type]
+                        operation=operation,
+                        status=status,
+                        duration=elapsed,
+                        url=url,
+                        error=error,
+                    )
+                else:
+                    record = RunRecord(
+                        operation=operation,
+                        status=status,
+                        url=url,
+                        duration_s=round(elapsed, 2),
+                        error=error,
+                    )
+                append_run(output_dir, record)
+            except Exception:  # noqa: BLE001 - el historial no debe romper el CLI
+                logger.exception("no se pudo escribir el historial de ejecuciones")
+
         ui = ProgressUI(verbose=verbose)
         try:
             with ui:
@@ -197,7 +245,8 @@ def _make_run_app() -> typer.Typer:
                                 "epub", "Generando EPUBs"
                             ),
                             notifier=notifier,
-                            operation="translate" if translate_pending else "download",
+                            operation=operation,
+                            refresh_toc=refresh_toc,
                         )
                     finally:
                         await fetcher.aclose()
@@ -206,16 +255,23 @@ def _make_run_app() -> typer.Typer:
                         await notifier.aclose()
 
                 manifest = asyncio.run(_pipeline())
-        except (FetchError, DownloadError) as exc:
-            _fail(f"Error de red/descarga: {exc}", EXIT_NETWORK)
-        except TranslateError as exc:
-            _fail(f"Error de traduccion: {exc}", EXIT_TRANSLATION)
-        except PipelineError as exc:
-            _fail(f"Error de EPUB/manifest: {exc}", EXIT_EPUB)
         except typer.Exit:
             raise
+        except (FetchError, DownloadError) as exc:
+            _record("error", error=str(exc))
+            _fail(f"Error de red/descarga: {exc}", EXIT_NETWORK)
+        except TranslateError as exc:
+            _record("error", error=str(exc))
+            _fail(f"Error de traduccion: {exc}", EXIT_TRANSLATION)
+        except PipelineError as exc:
+            _record("error", error=str(exc))
+            _fail(f"Error de EPUB/manifest: {exc}", EXIT_EPUB)
         except Exception as exc:  # noqa: BLE001 - fallback a codigo 4
+            _record("error", error=str(exc))
             _fail(f"Error inesperado: {exc}", EXIT_EPUB)
+
+        _record("done", manifest=manifest)
+        logger.info("run completado con exito: %s", manifest.slug)
 
         typer.echo(f"Listo: {manifest.title} -> {output_dir / manifest.slug}")
         if manifest.chapters_empty:
@@ -267,6 +323,8 @@ def _make_web_app() -> typer.Typer:
 
         from novel_cli.web.app import create_app
 
+        configure_logging(output_dir=config.default_output())
+
         if not no_browser:
             url = f"http://127.0.0.1:{port}"
             threading.Timer(1.0, lambda: webbrowser.open(url)).start()
@@ -278,8 +336,98 @@ def _make_web_app() -> typer.Typer:
     return app
 
 
+def _make_toc_app() -> typer.Typer:
+    """App para `novel-cli toc`: genera/actualiza la cache del TOC (manual)."""
+    app = typer.Typer(
+        name="toc",
+        help="Genera o actualiza la cache del TOC (.toc.json) de las novelas.",
+        no_args_is_help=True,
+        add_completion=False,
+    )
+
+    @app.command()
+    def rebuild(
+        slug: Annotated[
+            str | None, typer.Option("--slug", help="Novela concreta (slug)")
+        ] = None,
+        all_novels: Annotated[
+            bool, typer.Option("--all", help="Todas las novelas con manifest")
+        ] = False,
+        pacer_ms: Annotated[
+            int,
+            typer.Option("--pacer-ms", help="Pausa entre paginas del listado (ms)"),
+        ] = config.TOC_REQUEST_MIN_INTERVAL_MS,
+        output: Annotated[
+            str | None, typer.Option("--output", "-o", help="Directorio de salida")
+        ] = None,
+    ) -> None:
+        """Recorre el listado y escribe output/<slug>/.toc.json."""
+        if not slug and not all_novels:
+            _fail("indica --slug SLUG o --all", EXIT_VALIDATION)
+        if pacer_ms < 0:
+            _fail("--pacer-ms debe ser >= 0", EXIT_VALIDATION)
+        output_dir = Path(output).expanduser() if output else config.default_output()
+        configure_logging(output_dir=output_dir)
+        JOB_ID.set("toc")
+        targets = _toc_targets(output_dir, slug, all_novels)
+        if not targets:
+            _fail("no se encontraron novelas con manifest", EXIT_VALIDATION)
+        updated = asyncio.run(_rebuild_tocs(targets, pacer_ms))
+        typer.echo(f"TOC actualizado en {updated} novela(s)")
+
+    return app
+
+
+def _toc_targets(
+    output_dir: Path, slug: str | None, all_novels: bool
+) -> list[Path]:
+    """Resuelve los slug_dir con manifest a (re)cachear."""
+    if slug:
+        candidate = output_dir / slug
+        if (candidate / ".manifest.json").exists():
+            return [candidate]
+        return []
+    if not all_novels or not output_dir.exists():
+        return []
+    return [
+        path
+        for path in sorted(output_dir.iterdir())
+        if path.is_dir() and (path / ".manifest.json").exists()
+    ]
+
+
+async def _rebuild_tocs(targets: list[Path], pacer_ms: int) -> int:
+    """Crawlea el TOC de cada novela y escribe su `.toc.json`."""
+    pacer = Pacer(pacer_ms)
+    http = HttpFetcher(pacer=Pacer(), cooldown=CooldownGate())
+    playwright = PlaywrightFetcher()
+    fetcher = get_fetcher(http, playwright)
+    updated = 0
+    try:
+        for slug_dir in targets:
+            manifest = Manifest.load(slug_dir)
+            if manifest is None or not manifest.source_url:
+                continue
+            adapter = get_adapter(manifest.source_url)
+            try:
+                site, listing_pages = await crawl_toc(
+                    fetcher, adapter, manifest.source_url, toc_pacer=pacer
+                )
+            except Exception as exc:  # noqa: BLE001 - una novela no corta las demas
+                logger.exception("TOC: fallo en %s", slug_dir.name)
+                typer.echo(f"ERROR {slug_dir.name}: {exc}", err=True)
+                continue
+            make_cache(manifest.source_url, site.chapters, listing_pages).save(slug_dir)
+            updated += 1
+            typer.echo(f"OK    {slug_dir.name}: {len(site.chapters)} capitulos")
+    finally:
+        await fetcher.aclose()
+    return updated
+
+
 run_app = _make_run_app()
 web_app = _make_web_app()
+toc_app = _make_toc_app()
 
 app = run_app  # alias de compatibilidad: la descarga es el comando por defecto
 
@@ -295,10 +443,12 @@ def _fail(message: str, code: int) -> NoReturn:
 
 
 def main() -> None:
-    """Entry point del script `novel-cli`: despacha `web` o el run por defecto."""
+    """Entry point del script `novel-cli`: despacha `web`, `toc` o el run por defecto."""
     args = sys.argv[1:]
     if args and args[0] == "web":
         web_app(args[1:])
+    elif args and args[0] == "toc":
+        toc_app(args[1:])
     else:
         run_app(args)
 

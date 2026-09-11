@@ -8,6 +8,8 @@ clientes WebSocket suscritos.
 from __future__ import annotations
 
 import asyncio
+import logging
+import time
 import uuid
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -15,6 +17,7 @@ from pathlib import Path
 from typing import Any
 
 from novel_cli.core import config
+from novel_cli.core.models.state import Manifest
 from novel_cli.core.scraper.fetcher import (
     CooldownGate,
     HttpFetcher,
@@ -24,7 +27,11 @@ from novel_cli.core.scraper.fetcher import (
 )
 from novel_cli.core.services.pipeline import run_pipeline
 from novel_cli.core.services.translate import build_default_translator
+from novel_cli.logging_setup import JOB_ID
 from novel_cli.notifications import build_default_notifier
+from novel_cli.run_history import RunRecord, append_run, record_from_manifest
+
+logger = logging.getLogger(__name__)
 
 StatusCallback = Callable[[str], None]
 ProgressCallback = Callable[[int, int], None]
@@ -105,7 +112,47 @@ class JobManager:
         job.task.cancel()
         return True
 
+    def _record(
+        self,
+        job: Job,
+        operation: str,
+        status: str,
+        started: float,
+        *,
+        manifest: Manifest | None = None,
+        error: str | None = None,
+    ) -> None:
+        """Anexa el resultado del job al historial (no debe romper el job)."""
+        elapsed = time.monotonic() - started
+        try:
+            if manifest is not None:
+                record = record_from_manifest(
+                    manifest,
+                    operation=operation,
+                    status=status,
+                    duration=elapsed,
+                    job_id=job.id,
+                    url=job.url,
+                    error=error,
+                )
+            else:
+                record = RunRecord(
+                    operation=operation,
+                    status=status,
+                    job_id=job.id,
+                    url=job.url,
+                    duration_s=round(elapsed, 2),
+                    error=error,
+                )
+            append_run(job.output_dir, record)
+        except Exception:  # noqa: BLE001 - el historial no debe romper el job
+            logger.exception("no se pudo escribir el historial del job %s", job.id)
+
     async def _run(self, job: Job, options: dict[str, Any]) -> None:
+        token = JOB_ID.set(job.id)
+        started = time.monotonic()
+        operation = str(options.get("operation", "download"))
+        logger.info("job %s (%s) iniciado: %s", job.id, operation, job.url)
         job.state = JOB_RUNNING
         job.status("init", "Preparando descarga")
         http = HttpFetcher(pacer=Pacer(), cooldown=CooldownGate())
@@ -142,7 +189,8 @@ class JobManager:
                 on_translate_progress=lambda d, t: job.progress("translate", d, t),
                 on_epub_progress=lambda d, t: job.progress("epub", d, t),
                 notifier=notifier,
-                operation=str(options.get("operation", "download")),
+                operation=operation,
+                refresh_toc=bool(options.get("refresh_toc")),
             )
             job.slug = manifest.slug
             job.result = {
@@ -157,16 +205,23 @@ class JobManager:
             }
             job.state = JOB_DONE
             job.status("done", f"Listo: {manifest.title}")
+            logger.info("job %s completado: %s", job.id, manifest.slug)
+            self._record(job, operation, "done", started, manifest=manifest)
         except asyncio.CancelledError:
             job.state = JOB_CANCELLED
             job.status("cancelled", "Job cancelado")
+            logger.warning("job %s cancelado", job.id)
+            self._record(job, operation, "cancelled", started, error="cancelado")
             raise
         except Exception as exc:  # noqa: BLE001 - capturamos el fallo del job
             job.state = JOB_ERROR
             job.error = str(exc)
             job.status("error", f"Error: {exc}")
+            logger.exception("job %s fallo", job.id)
+            self._record(job, operation, "error", started, error=str(exc))
         finally:
             await fetcher.aclose()
             if translator is not None:
                 await translator.aclose()
             await notifier.aclose()
+            JOB_ID.reset(token)

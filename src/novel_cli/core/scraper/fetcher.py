@@ -8,11 +8,14 @@ from __future__ import annotations
 
 import asyncio
 import email.utils
+import logging
 from datetime import UTC, datetime
 
 import httpx
 
 from novel_cli.core import config
+
+logger = logging.getLogger(__name__)
 
 CHROME_HEADERS: dict[str, str] = {
     "User-Agent": (
@@ -151,7 +154,16 @@ class HttpFetcher:
                 response = await self._client.get(url, headers=headers)
             except httpx.HTTPError as exc:
                 if attempt < self.transient_retries:
-                    await asyncio.sleep(self._backoff(attempt))
+                    delay = self._backoff(attempt)
+                    logger.debug(
+                        "reintento de red en %s (intento %d/%d, espera %.1fs): %s",
+                        url,
+                        attempt + 1,
+                        self.transient_retries,
+                        delay,
+                        exc,
+                    )
+                    await asyncio.sleep(delay)
                     continue
                 raise FetchError(f"network error fetching {url}: {exc}") from exc
 
@@ -161,6 +173,14 @@ class HttpFetcher:
             if is_rate_limit(response.status_code):
                 delay = self._rate_delay(response, attempt)
                 await self.cooldown.trigger(delay)
+                logger.warning(
+                    "rate-limit %s en %s; cool-down %.1fs (intento %d/%d)",
+                    response.status_code,
+                    url,
+                    delay,
+                    attempt + 1,
+                    self.rate_limit_retries,
+                )
                 if attempt < self.rate_limit_retries:
                     await asyncio.sleep(delay)
                     continue
@@ -171,13 +191,23 @@ class HttpFetcher:
 
             if is_transient(response.status_code):
                 if attempt < self.transient_retries:
-                    await asyncio.sleep(self._backoff(attempt))
+                    delay = self._backoff(attempt)
+                    logger.debug(
+                        "HTTP transitorio %s en %s (intento %d/%d, espera %.1fs)",
+                        response.status_code,
+                        url,
+                        attempt + 1,
+                        self.transient_retries,
+                        delay,
+                    )
+                    await asyncio.sleep(delay)
                     continue
                 raise FetchError(
                     f"transient HTTP {response.status_code} fetching {url}",
                     status_code=response.status_code,
                 )
 
+            logger.warning("HTTP %s en %s", response.status_code, url)
             raise FetchError(
                 f"HTTP {response.status_code} fetching {url}",
                 status_code=response.status_code,
@@ -268,7 +298,8 @@ class FallbackFetcher:
             return await self._pw_fetch("fetch_html", url, headers=headers)
         try:
             return await self.http.fetch_html(url, headers=headers)
-        except FetchError:
+        except FetchError as exc:
+            logger.info("HTTP fallo en %s (%s); probando Playwright", url, exc)
             return await self._pw_fetch("fetch_html", url, headers=headers)
 
     async def fetch_bytes(self, url: str, *, headers: dict[str, str] | None = None) -> bytes:
@@ -276,7 +307,8 @@ class FallbackFetcher:
             return await self._pw_fetch("fetch_bytes", url, headers=headers)
         try:
             return await self.http.fetch_bytes(url, headers=headers)
-        except FetchError:
+        except FetchError as exc:
+            logger.info("HTTP fallo en %s (%s); probando Playwright", url, exc)
             return await self._pw_fetch("fetch_bytes", url, headers=headers)
 
     async def _pw_fetch(
@@ -284,6 +316,7 @@ class FallbackFetcher:
     ) -> str | bytes:
         if self.playwright is None:
             raise FetchError(f"playwright fallback unavailable for {url}")
+        logger.debug("Playwright %s: %s", method, url)
         try:
             result = await getattr(self.playwright, method)(url, headers=headers)
         except FetchError:

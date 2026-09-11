@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from pathlib import Path
 from typing import Protocol
 
@@ -26,6 +27,8 @@ from novel_cli.core.utils.names import chapter_filename
 from novel_cli.core.utils.text import split_text_by_words
 
 GTX_ENDPOINT = "https://translate.googleapis.com/translate_a/single"
+
+logger = logging.getLogger(__name__)
 
 
 class TranslateError(Exception):
@@ -82,7 +85,15 @@ class GoogleFreeTranslator:
                 response = await self._client.get(GTX_ENDPOINT, params=params)
             except httpx.HTTPError as exc:
                 if attempt < self.max_retries:
-                    await asyncio.sleep(self._backoff(attempt))
+                    delay = self._backoff(attempt)
+                    logger.debug(
+                        "traduccion: reintento de red (intento %d/%d, espera %.1fs): %s",
+                        attempt + 1,
+                        self.max_retries,
+                        delay,
+                        exc,
+                    )
+                    await asyncio.sleep(delay)
                     continue
                 raise TranslateError(f"network error: {exc}") from exc
 
@@ -92,6 +103,13 @@ class GoogleFreeTranslator:
             if response.status_code in (429, 503):
                 delay = self._rate_delay(response, attempt)
                 await self.cooldown.trigger(delay)
+                logger.warning(
+                    "traduccion: rate-limit %s; cool-down %.1fs (intento %d/%d)",
+                    response.status_code,
+                    delay,
+                    attempt + 1,
+                    self.max_retries,
+                )
                 if attempt < self.max_retries:
                     await asyncio.sleep(delay)
                     continue
@@ -171,7 +189,15 @@ class LibreTranslateTranslator:
                 )
             except httpx.HTTPError as exc:
                 if attempt < self.max_retries:
-                    await asyncio.sleep(self._backoff(attempt))
+                    delay = self._backoff(attempt)
+                    logger.debug(
+                        "traduccion libre: reintento de red (intento %d/%d, espera %.1fs): %s",
+                        attempt + 1,
+                        self.max_retries,
+                        delay,
+                        exc,
+                    )
+                    await asyncio.sleep(delay)
                     continue
                 raise TranslateError(f"network error: {exc}") from exc
 
@@ -181,6 +207,13 @@ class LibreTranslateTranslator:
             if response.status_code in (429, 503):
                 delay = self._rate_delay(response, attempt)
                 await self.cooldown.trigger(delay)
+                logger.warning(
+                    "traduccion libre: rate-limit %s; cool-down %.1fs (intento %d/%d)",
+                    response.status_code,
+                    delay,
+                    attempt + 1,
+                    self.max_retries,
+                )
                 if attempt < self.max_retries:
                     await asyncio.sleep(delay)
                     continue
@@ -333,6 +366,9 @@ async def translate_chapters(
             stale.unlink()
 
     if not todo:
+        logger.info(
+            "traduccion (%s): sin pendientes (%d ya traducidos)", target, len(existing_nums)
+        )
         manifest.chapters_translated = len(existing_nums)
         manifest.translated = True
         manifest.save(slug_dir)
@@ -342,6 +378,14 @@ async def translate_chapters(
     completed: list[Chapter] = []
     done = 0
     total = len(todo)
+    logger.info(
+        "traduccion (%s): %d pendientes de %d capitulos (concurrencia %d, cache %d)",
+        target,
+        total,
+        len(chapters),
+        concurrency,
+        len(existing_nums),
+    )
 
     async def work(chapter: Chapter) -> None:
         nonlocal done
@@ -357,6 +401,7 @@ async def translate_chapters(
             )
         completed.append(translated)
         done += 1
+        logger.debug("capitulo %d traducido (%d/%d)", chapter.num, done, total)
         if on_progress:
             on_progress(done, total)
 

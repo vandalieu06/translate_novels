@@ -255,7 +255,8 @@ async def test_pipeline_resume_skips_download_and_translate(tmp_path, fixture_lo
     manifest2 = await run_pipeline(
         **run_kwargs(tmp_path, second, translate=True, translator=translator2)
     )
-    assert second.toc_calls == 1
+    # cache del TOC fresca: no se vuelve a leer el listado
+    assert second.toc_calls == 0
     assert second.chapter_calls == 0
     assert translator2.calls == 0
     assert manifest2.epub_original == ["The Eternal Journey.epub"]

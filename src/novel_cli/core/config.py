@@ -132,6 +132,23 @@ def is_valid_translate_target(target: str) -> bool:
     return target in TRANSLATE_TARGET_LANGUAGES
 
 
+# --- Cache del TOC (indice de capitulos) ------------------------------------
+# Pausa entre paginas de listado (mas conservadora que la de descarga).
+TOC_REQUEST_MIN_INTERVAL_MS = _int_env("NOVEL_TOC_PACER_MS", 1000)
+DEFAULT_TOC_TTL_HOURS = 6.0
+
+
+def toc_ttl_seconds() -> float:
+    """TTL de la cache del TOC en segundos (env NOVEL_TOC_TTL_HOURS; 0 = siempre peek)."""
+    raw = os.environ.get("NOVEL_TOC_TTL_HOURS")
+    if raw is None or not raw.strip():
+        return DEFAULT_TOC_TTL_HOURS * 3600
+    try:
+        return max(0.0, float(raw)) * 3600
+    except ValueError:
+        return DEFAULT_TOC_TTL_HOURS * 3600
+
+
 # --- Notificaciones por Telegram (opcionales) -------------------------------
 # Sin token y chat_id no se notifica. Se leen en cada llamada para que los
 # tests puedan configurarlas con monkeypatch.

@@ -27,6 +27,7 @@ class JobRequest(BaseModel):
     translate_concurrency: int | None = None
     playwright: bool = False
     concurrency: int = config.DEFAULT_CONCURRENCY
+    refresh_toc: bool = False
 
 
 class RetranslateRequest(BaseModel):

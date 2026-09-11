@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from collections.abc import Callable
 from pathlib import Path
 
@@ -12,6 +13,8 @@ from novel_cli.core.models.state import Manifest
 from novel_cli.core.scraper.base import Fetcher, SiteAdapter
 from novel_cli.core.scraper.fetcher import FetchError, Pacer
 from novel_cli.core.utils.names import chapter_filename
+
+logger = logging.getLogger(__name__)
 
 ProgressCallback = Callable[[int, int], None]
 
@@ -88,6 +91,9 @@ async def download_chapters(
     failed: list[tuple[Chapter, Exception]] = []
     done = 0
     total = len(missing)
+    logger.info(
+        "descargando %d capitulos (concurrencia %d, force=%s)", total, concurrency, force
+    )
 
     async def fetch_one(chapter: Chapter) -> tuple[Chapter, list[str]] | None:
         nonlocal done
@@ -96,6 +102,7 @@ async def download_chapters(
             try:
                 html = await fetcher.fetch_html(chapter.url)
             except Exception as exc:  # noqa: BLE001 - recopilamos el fallo
+                logger.warning("capitulo %d fallo: %s", chapter.num, exc)
                 failed.append((chapter, exc))
                 return None
             paragraphs = adapter.parse_chapter(html, chapter.url)
@@ -117,6 +124,7 @@ async def download_chapters(
             continue
         chapter, paragraphs = result
         if is_chapter_empty(paragraphs):
+            logger.warning("capitulo %d vacio; se reintentara al final", chapter.num)
             empty.append((chapter, paragraphs))
         else:
             await save(chapter, paragraphs)
@@ -141,9 +149,13 @@ async def download_chapters(
             if attempt < len(EMPTY_RETRY_BACKOFF):
                 await asyncio.sleep(EMPTY_RETRY_BACKOFF[attempt])
         if not resolved:
+            logger.warning(
+                "capitulo %d sigue vacio tras %d reintentos", chapter.num, empty_retries
+            )
             still_empty.append((chapter, paragraphs))
 
     if failed:
+        logger.error("%d capitulos fallaron al descargarse", len(failed))
         raise DownloadError(f"{len(failed)} capitulos fallaron al descargarse")
 
     manifest.chapters_empty = len(still_empty)

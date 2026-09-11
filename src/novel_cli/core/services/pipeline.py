@@ -8,8 +8,9 @@ from collections.abc import Callable
 from pathlib import Path
 
 from novel_cli.core import config
-from novel_cli.core.models.novel import Chapter, NovelMetadata
+from novel_cli.core.models.novel import Chapter, NovelMetadata, SiteMetadata
 from novel_cli.core.models.state import Manifest
+from novel_cli.core.models.toc import TocCache, make_cache
 from novel_cli.core.notifications import NotificationEvent, Notifier
 from novel_cli.core.scraper.base import Fetcher, SiteAdapter
 from novel_cli.core.scraper.fetcher import FetchError, Pacer
@@ -23,7 +24,11 @@ from novel_cli.core.services.download import (
     refresh_empty_counts,
 )
 from novel_cli.core.services.epub import build_epub, generate_volumes, stable_identifier
-from novel_cli.core.services.toc import fetch_site_metadata
+from novel_cli.core.services.toc import (
+    crawl_toc,
+    site_from_cache,
+    toc_changed,
+)
 from novel_cli.core.services.translate import (
     TranslateError,
     Translator,
@@ -98,6 +103,7 @@ def _notify_run(func: Callable[..., object]) -> Callable[..., object]:
     async def wrapper(**kwargs: object) -> Manifest:
         notifier = kwargs.get("notifier")
         operation = str(kwargs.get("operation") or "download")
+        logger.info("job %s iniciado: %s", operation, kwargs.get("url", ""))
         await _emit(
             notifier,
             NotificationEvent(
@@ -107,8 +113,10 @@ def _notify_run(func: Callable[..., object]) -> Callable[..., object]:
         try:
             manifest = await func(**kwargs)
         except Exception as exc:  # noqa: BLE001 - re-lanzamos tras notificar
+            logger.exception("job %s fallo", operation)
             await _emit_error(notifier, exc, operation)
             raise
+        logger.info("job %s completado: %s", operation, manifest.slug)
         await _emit(
             notifier,
             NotificationEvent(
@@ -147,6 +155,7 @@ async def run_pipeline(
     on_epub_progress: ProgressCallback | None = None,
     notifier: Notifier | None = None,
     operation: str = "download",
+    refresh_toc: bool = False,
 ) -> Manifest:
     """Ejecuta el pipeline completo y devuelve el manifest final."""
     if translate_pending:
@@ -166,7 +175,15 @@ async def run_pipeline(
     if on_status:
         on_status("Resolviendo adaptador de sitio")
     adapter = adapter or get_adapter(url)
-    site = await fetch_site_metadata(fetcher, adapter, url)
+    site, listing_pages, crawled = await _resolve_toc(
+        fetcher=fetcher,
+        adapter=adapter,
+        url=url,
+        output_dir=output_dir,
+        resume=resume,
+        force=force,
+        refresh_toc=refresh_toc,
+    )
     metadata = site.metadata
     if not site.chapters:
         raise PipelineError(
@@ -186,6 +203,9 @@ async def run_pipeline(
     slug = slugify(metadata.title)
     slug_dir = output_dir / slug
     slug_dir.mkdir(parents=True, exist_ok=True)
+    if crawled:
+        make_cache(url, site.chapters, listing_pages).save(slug_dir)
+        logger.info("TOC: cache guardada en %s/.toc.json", slug_dir.name)
 
     manifest = _load_or_create_manifest(
         slug_dir, metadata, slug, volume_size, translate, resume, force
@@ -269,6 +289,7 @@ async def run_pipeline(
             data={"volumes": len(original_names)},
         ),
     )
+    logger.info("EPUB original generado: %d tomo(s)", len(original_names))
 
     if translate:
         if translator is None:
@@ -331,6 +352,7 @@ async def run_pipeline(
                 data={"target": target, "volumes": len(es_names)},
             ),
         )
+        logger.info("EPUB %s generado: %d tomo(s)", target.upper(), len(es_names))
 
     _cleanup_orphan_epubs(
         slug_dir,
@@ -522,6 +544,67 @@ def _find_manifest_by_url(output_dir: Path, url: str) -> tuple[Path, Manifest]:
     raise PipelineError(
         f"no hay descarga previa para {url}; ejecuta primero novel-cli <url>"
     )
+
+
+def _find_manifest_by_url_or_none(
+    output_dir: Path, url: str
+) -> tuple[Path, Manifest] | tuple[None, None]:
+    """Variante no-lanzante de ``_find_manifest_by_url`` (para la cache del TOC)."""
+    if not output_dir.exists():
+        return None, None
+    for slug_dir in sorted(output_dir.iterdir()):
+        if not slug_dir.is_dir():
+            continue
+        manifest = Manifest.load(slug_dir)
+        if manifest is not None and manifest.source_url == url:
+            return slug_dir, manifest
+    return None, None
+
+
+async def _resolve_toc(
+    *,
+    fetcher: Fetcher,
+    adapter: SiteAdapter,
+    url: str,
+    output_dir: Path,
+    resume: bool,
+    force: bool,
+    refresh_toc: bool,
+) -> tuple[SiteMetadata, list[str], bool]:
+    """Devuelve ``(SiteMetadata, listing_pages, crawled)`` usando la cache si aplica.
+
+    - Cache fresca (< TTL) → sin peticiones.
+    - Cache caducada → peek de 2 paginas; si no hay novedades, se reutiliza.
+    - Sin cache / ``force`` / ``refresh_toc`` → crawl completo (``crawled=True``).
+    """
+    using_cache = resume and not force and not refresh_toc
+    existing_dir, existing_manifest = _find_manifest_by_url_or_none(output_dir, url)
+    cache = TocCache.load(existing_dir) if using_cache and existing_dir else None
+
+    if cache is not None and existing_manifest is not None and cache.chapters:
+        age = cache.age_seconds()
+        if age <= config.toc_ttl_seconds():
+            logger.info(
+                "TOC: usando cache de %s (%d capitulos, %.0f min)",
+                existing_dir.name if existing_dir else "?",
+                len(cache.chapters),
+                age / 60,
+            )
+            return site_from_cache(existing_manifest, cache), cache.listing_pages, False
+        toc_pacer = Pacer(config.TOC_REQUEST_MIN_INTERVAL_MS)
+        if not await toc_changed(fetcher, adapter, cache, toc_pacer=toc_pacer):
+            logger.info("TOC: cache vigente (peek sin novedades)")
+            cache.touch()
+            if existing_dir is not None:
+                cache.save(existing_dir)
+            return site_from_cache(existing_manifest, cache), cache.listing_pages, False
+        logger.info("TOC: novedades detectadas; refrescando el indice")
+
+    toc_pacer = Pacer(config.TOC_REQUEST_MIN_INTERVAL_MS)
+    site, listing_pages = await crawl_toc(
+        fetcher, adapter, url, toc_pacer=toc_pacer
+    )
+    return site, listing_pages, True
 
 
 async def _run_translate_pending(
