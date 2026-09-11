@@ -24,6 +24,7 @@ from novel_cli.core.scraper.fetcher import (
 )
 from novel_cli.core.services.pipeline import run_pipeline
 from novel_cli.core.services.translate import build_default_translator
+from novel_cli.notifications import build_default_notifier
 
 StatusCallback = Callable[[str], None]
 ProgressCallback = Callable[[int, int], None]
@@ -117,6 +118,7 @@ class JobManager:
             if (options.get("translate") or options.get("translate_pending"))
             else None
         )
+        notifier = build_default_notifier()
         translate_concurrency = options.get("translate_concurrency")
         if translate_concurrency is None:
             translate_concurrency = config.translate_concurrency_default()
@@ -139,6 +141,8 @@ class JobManager:
                 on_download_progress=lambda d, t: job.progress("download", d, t),
                 on_translate_progress=lambda d, t: job.progress("translate", d, t),
                 on_epub_progress=lambda d, t: job.progress("epub", d, t),
+                notifier=notifier,
+                operation=str(options.get("operation", "download")),
             )
             job.slug = manifest.slug
             job.result = {
@@ -165,3 +169,4 @@ class JobManager:
             await fetcher.aclose()
             if translator is not None:
                 await translator.aclose()
+            await notifier.aclose()

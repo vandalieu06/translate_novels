@@ -212,6 +212,7 @@ def test_sync_novel_creates_job(monkeypatch, tmp_path):
     assert captured["volume_size"] == 100
     assert captured["download_all"] is False
     assert captured["force"] is False
+    assert captured["operation"] == "sync"
 
 
 def test_retranslate_novela_not_found(monkeypatch, tmp_path):
@@ -259,6 +260,7 @@ def test_retranslate_creates_job(monkeypatch, tmp_path):
     assert captured["force"] is False
     assert captured["volume_size"] == 100
     assert captured["download_all"] is False
+    assert captured["operation"] == "retranslate"
 
 
 def test_job_translate_concurrency_propagated(monkeypatch, tmp_path):
@@ -552,6 +554,7 @@ def test_create_job_with_target_language(monkeypatch, tmp_path):
     )
     assert res.status_code == 200
     assert captured["target"] == "fr"
+    assert captured["operation"] == "download"
 
 
 def test_create_job_invalid_target_rejected(monkeypatch, tmp_path):

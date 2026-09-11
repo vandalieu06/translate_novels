@@ -132,6 +132,27 @@ def is_valid_translate_target(target: str) -> bool:
     return target in TRANSLATE_TARGET_LANGUAGES
 
 
+# --- Notificaciones por Telegram (opcionales) -------------------------------
+# Sin token y chat_id no se notifica. Se leen en cada llamada para que los
+# tests puedan configurarlas con monkeypatch.
+def telegram_bot_token() -> str | None:
+    return os.environ.get("NOVEL_TELEGRAM_BOT_TOKEN") or None
+
+
+def telegram_chat_id() -> str | None:
+    return os.environ.get("NOVEL_TELEGRAM_CHAT_ID") or None
+
+
+def telegram_enabled() -> bool:
+    """Activo si hay token+chat y no se desactiva explicitamente."""
+    if not telegram_bot_token() or not telegram_chat_id():
+        return False
+    raw = os.environ.get("NOVEL_TELEGRAM_ENABLED")
+    if raw is None or not raw.strip():
+        return True
+    return raw.strip().lower() in ("1", "true", "yes", "on")
+
+
 def default_output() -> Path:
     """Directorio de salida por defecto.
 

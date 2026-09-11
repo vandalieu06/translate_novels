@@ -79,6 +79,7 @@ def create_app(*, output_dir: Path | None = None) -> FastAPI:
             "translate_backend": config.TRANSLATE_BACKEND,
             "default_translate_target": config.translate_target_default(),
             "translate_languages": config.TRANSLATE_TARGET_LANGUAGES,
+            "telegram_enabled": config.telegram_enabled(),
         }
 
     return app

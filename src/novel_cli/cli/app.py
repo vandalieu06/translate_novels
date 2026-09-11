@@ -25,6 +25,7 @@ from novel_cli.core.scraper.fetcher import (
 from novel_cli.core.services.download import DownloadError
 from novel_cli.core.services.pipeline import PipelineError, run_pipeline
 from novel_cli.core.services.translate import TranslateError, build_default_translator
+from novel_cli.notifications import build_default_notifier
 
 EXIT_OK = 0
 EXIT_VALIDATION = 1
@@ -167,6 +168,7 @@ def _make_run_app() -> typer.Typer:
                     if (translate or translate_pending)
                     else None
                 )
+                notifier = build_default_notifier()
 
                 async def _pipeline() -> object:
                     try:
@@ -194,11 +196,14 @@ def _make_run_app() -> typer.Typer:
                             on_epub_progress=ui.callback(
                                 "epub", "Generando EPUBs"
                             ),
+                            notifier=notifier,
+                            operation="translate" if translate_pending else "download",
                         )
                     finally:
                         await fetcher.aclose()
                         if translator is not None:
                             await translator.aclose()
+                        await notifier.aclose()
 
                 manifest = asyncio.run(_pipeline())
         except (FetchError, DownloadError) as exc:

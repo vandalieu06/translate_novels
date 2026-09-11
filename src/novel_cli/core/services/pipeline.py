@@ -2,16 +2,20 @@
 
 from __future__ import annotations
 
+import functools
+import logging
 from collections.abc import Callable
 from pathlib import Path
 
 from novel_cli.core import config
 from novel_cli.core.models.novel import Chapter, NovelMetadata
 from novel_cli.core.models.state import Manifest
+from novel_cli.core.notifications import NotificationEvent, Notifier
 from novel_cli.core.scraper.base import Fetcher, SiteAdapter
-from novel_cli.core.scraper.fetcher import Pacer
+from novel_cli.core.scraper.fetcher import FetchError, Pacer
 from novel_cli.core.scraper.registry import get_adapter
 from novel_cli.core.services.download import (
+    DownloadError,
     download_chapters,
     download_cover,
     is_chapter_empty,
@@ -20,7 +24,11 @@ from novel_cli.core.services.download import (
 )
 from novel_cli.core.services.epub import build_epub, generate_volumes, stable_identifier
 from novel_cli.core.services.toc import fetch_site_metadata
-from novel_cli.core.services.translate import Translator, translate_chapters
+from novel_cli.core.services.translate import (
+    TranslateError,
+    Translator,
+    translate_chapters,
+)
 from novel_cli.core.utils.names import (
     chapter_filename,
     epub_name,
@@ -45,6 +53,77 @@ class PipelineError(Exception):
     """Fallo al generar EPUB/manifest o estado inconsistente."""
 
 
+logger = logging.getLogger(__name__)
+
+
+async def _emit(notifier: Notifier | None, event: NotificationEvent) -> None:
+    """Emite un evento sin dejar que un fallo del notifier rompa el pipeline."""
+    if notifier is None:
+        return
+    try:
+        await notifier.notify(event)
+    except Exception:  # noqa: BLE001 - notificar nunca debe romper el pipeline
+        logger.exception("el notificador fallo al emitir %s", event.kind)
+
+
+def _phase_from_error(exc: Exception) -> str:
+    if isinstance(exc, (DownloadError, FetchError)):
+        return "descarga"
+    if isinstance(exc, TranslateError):
+        return "traduccion"
+    if isinstance(exc, PipelineError):
+        return "epub/manifest"
+    return "el pipeline"
+
+
+async def _emit_error(
+    notifier: Notifier | None, exc: Exception, operation: str | None
+) -> None:
+    await _emit(
+        notifier,
+        NotificationEvent(
+            kind="job_error",
+            phase=_phase_from_error(exc),
+            detail=str(exc),
+            ok=False,
+            operation=operation,
+        ),
+    )
+
+
+def _notify_run(func: Callable[..., object]) -> Callable[..., object]:
+    """Envia `job_error` si el pipeline falla y `job_done` al terminar."""
+
+    @functools.wraps(func)
+    async def wrapper(**kwargs: object) -> Manifest:
+        notifier = kwargs.get("notifier")
+        operation = str(kwargs.get("operation") or "download")
+        await _emit(
+            notifier,
+            NotificationEvent(
+                kind="job_started", phase="start", operation=operation
+            ),
+        )
+        try:
+            manifest = await func(**kwargs)
+        except Exception as exc:  # noqa: BLE001 - re-lanzamos tras notificar
+            await _emit_error(notifier, exc, operation)
+            raise
+        await _emit(
+            notifier,
+            NotificationEvent(
+                kind="job_done",
+                phase="done",
+                title=manifest.title,
+                operation=operation,
+            ),
+        )
+        return manifest
+
+    return wrapper
+
+
+@_notify_run
 async def run_pipeline(
     *,
     url: str,
@@ -66,6 +145,8 @@ async def run_pipeline(
     on_download_progress: ProgressCallback | None = None,
     on_translate_progress: ProgressCallback | None = None,
     on_epub_progress: ProgressCallback | None = None,
+    notifier: Notifier | None = None,
+    operation: str = "download",
 ) -> Manifest:
     """Ejecuta el pipeline completo y devuelve el manifest final."""
     if translate_pending:
@@ -80,6 +161,7 @@ async def run_pipeline(
             on_status=on_status,
             on_translate_progress=on_translate_progress,
             on_epub_progress=on_epub_progress,
+            notifier=notifier,
         )
     if on_status:
         on_status("Resolviendo adaptador de sitio")
@@ -91,6 +173,15 @@ async def run_pipeline(
             "no se encontraron capitulos en el TOC. "
             "Puede requerir JS: prueba -p/--playwright, o el sitio bloquea el acceso."
         )
+    await _emit(
+        notifier,
+        NotificationEvent(
+            kind="scrape_done",
+            phase="scrape",
+            title=metadata.title,
+            data={"chapters_total": len(site.chapters)},
+        ),
+    )
 
     slug = slugify(metadata.title)
     slug_dir = output_dir / slug
@@ -138,6 +229,18 @@ async def run_pipeline(
     manifest.chapters_total = manifest.chapters_downloaded
     loaded = _load_all_chapters(site.chapters, slug_dir / "raw")
     manifest.save(slug_dir)
+    await _emit(
+        notifier,
+        NotificationEvent(
+            kind="download_done",
+            phase="descarga",
+            title=metadata.title,
+            data={
+                "chapters_downloaded": manifest.chapters_downloaded,
+                "chapters_empty": manifest.chapters_empty,
+            },
+        ),
+    )
 
     if on_status:
         on_status("Generando EPUB original")
@@ -157,6 +260,15 @@ async def run_pipeline(
     )
     manifest.epub_original = original_names
     manifest.save(slug_dir)
+    await _emit(
+        notifier,
+        NotificationEvent(
+            kind="epub_original_done",
+            phase="epub",
+            title=metadata.title,
+            data={"volumes": len(original_names)},
+        ),
+    )
 
     if translate:
         if translator is None:
@@ -164,7 +276,7 @@ async def run_pipeline(
         target = target or manifest.translated_language or config.translate_target_default()
         if on_status:
             on_status(f"Traduciendo a {target}")
-        await translate_chapters(
+        translated_now = await translate_chapters(
             translator=translator,
             chapters=loaded,
             slug_dir=slug_dir,
@@ -173,6 +285,19 @@ async def run_pipeline(
             force=force,
             concurrency=config.effective_translate_concurrency(translate_concurrency),
             on_progress=on_translate_progress,
+        )
+        await _emit(
+            notifier,
+            NotificationEvent(
+                kind="translate_done",
+                phase="traduccion",
+                title=metadata.title,
+                data={
+                    "target": target,
+                    "translated_new": len(translated_now),
+                    "translated_total": manifest.chapters_translated,
+                },
+            ),
         )
         translated = _build_epub_chapters(
             loaded, slug_dir / "translated", _translated_placeholder(target)
@@ -197,6 +322,15 @@ async def run_pipeline(
         manifest.translated_language = target
         refresh_empty_counts(slug_dir / "raw", manifest)
         manifest.save(slug_dir)
+        await _emit(
+            notifier,
+            NotificationEvent(
+                kind="epub_translated_done",
+                phase="epub",
+                title=metadata.title,
+                data={"target": target, "volumes": len(es_names)},
+            ),
+        )
 
     _cleanup_orphan_epubs(
         slug_dir,
@@ -402,6 +536,7 @@ async def _run_translate_pending(
     on_status: StatusCallback | None,
     on_translate_progress: ProgressCallback | None,
     on_epub_progress: ProgressCallback | None,
+    notifier: Notifier | None = None,
 ) -> Manifest:
     """Traduce solo los capitulos pendientes sin descargar ni tocar el TOC."""
     if translator is None:
@@ -414,7 +549,7 @@ async def _run_translate_pending(
     target = target or manifest.translated_language or config.translate_target_default()
     if on_status:
         on_status(f"Traduciendo capitulos pendientes a {target} (sin descargar)")
-    await translate_chapters(
+    translated_now = await translate_chapters(
         translator=translator,
         chapters=raw_chapters,
         slug_dir=slug_dir,
@@ -423,6 +558,19 @@ async def _run_translate_pending(
         force=force,
         concurrency=config.effective_translate_concurrency(translate_concurrency),
         on_progress=on_translate_progress,
+    )
+    await _emit(
+        notifier,
+        NotificationEvent(
+            kind="translate_done",
+            phase="traduccion",
+            title=manifest.title,
+            data={
+                "target": target,
+                "translated_new": len(translated_now),
+                "translated_total": manifest.chapters_translated,
+            },
+        ),
     )
     translated = _build_epub_chapters(
         raw_chapters, slug_dir / "translated", _translated_placeholder(target)
@@ -455,6 +603,15 @@ async def _run_translate_pending(
         keep=manifest.epub_original + manifest.epub_translated,
     )
     manifest.save(slug_dir)
+    await _emit(
+        notifier,
+        NotificationEvent(
+            kind="epub_translated_done",
+            phase="epub",
+            title=manifest.title,
+            data={"target": target, "volumes": len(es_names)},
+        ),
+    )
     return manifest
 
 
