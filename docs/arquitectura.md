@@ -31,6 +31,8 @@ translate_novels/
 │   ├── notifications/          # ADAPTADORES DE NOTIFICACIÓN (presentación)
 │   │   ├── __init__.py         # build_default_notifier() (Telegram o Null)
 │   │   └── telegram.py         # TelegramNotifier (python-telegram-bot, solo envío)
+│   ├── logging_setup.py        # configure_logging() + JOB_ID (contextvar) + filtro
+│   ├── run_history.py          # RunRecord + append_run() (output/logs/runs.jsonl)
 │   └── core/                   # DOMINIO PURO (sin typer/rich/argv)
 │       ├── config.py           # constantes y default_output()
 │       ├── notifications.py    # NotificationEvent + Protocol Notifier + NullNotifier
@@ -215,7 +217,7 @@ Adaptadores (`sites/`):
 - `NovelfireAdapter` — selectores `{ .novel-title, .fixed-img .cover img, #chpagedlist .chapter-list li a, #chapter-container #content p }`; `tocs()` → página de portada + `/chapters`; `next_page()` lee `.page-link[rel="next"]`.
 - `GenericAdapter` — heurística TOC estilo Readest `chapterList.ts`: enlaces con texto numerado (`Chapter N`, `第N章`, `Capítulo N`) o href con digit runs; elige el contenedor más profundo con la mayoría de candidatos; metadatos de `og:title`/`og:image`/`meta[name=author]`; dedupe y orden por número.
 
-`services/toc.py` → `fetch_site_metadata()` recorre las páginas de listado del adaptador y fusiona metadatos + capítulos.
+`services/toc.py` → `crawl_toc()` recorre las páginas de listado del adaptador y fusiona metadatos + capítulos, registrando la primera/última página (para el peek de la caché). `fetch_site_metadata()` se conserva como wrapper. El índice se **cachea** en `output/<slug>/.toc.json` (ver §5.12).
 
 ### 5.4 Descarga (`core/services/download.py`)
 
@@ -301,6 +303,27 @@ Sobre puertos: la web escucha en **un único puerto** (default `8000`). El WebSo
 - **Inyección**: CLI y web construyen el notifier y lo cierran en su `finally`; `/api/config` expone `telegram_enabled`.
 - **Dependencia**: `python-telegram-bot>=21` (exige `httpx>=0.27,<0.29`, por eso `pyproject.toml` acota `httpx`).
 
+### 5.11 Logging e historial (`logging_setup.py`, `run_history.py`)
+
+- **`core` puro**: los módulos de dominio solo usan `logging.getLogger(__name__)`; no configuran handlers. `fetcher`, `download`, `translate`, `toc` y `pipeline` registran fases, reintentos/backoff, `429`/`Retry-After`, fallback HTTP→Playwright, capítulos vacíos y caché de traducción.
+- **`configure_logging(*, output_dir, verbose=False, force=False)`** (infra, invocado por los `main()`/entrypoints, nunca por `create_app`): fichero `output/logs/novel-cli.log` con `RotatingFileHandler` (5 MiB × 3, o `NOVEL_LOG_FILE`/`NOVEL_LOG_MAX_BYTES`/`NOVEL_LOG_BACKUPS`) y consola a WARNING (DEBUG con `-V`). El nivel del fichero es `NOVEL_LOG_LEVEL` o DEBUG con `verbose`. Idempotente y con `propagate=False` en el logger `novel_cli`.
+- **`job_id`**: `contextvars.ContextVar` fijado por `JobManager._run` (y `"cli"` en el run de CLI); un `logging.Filter` lo inyecta en cada registro (`[job_id]`), de modo que los logs concurrentes de la web quedan correlacionados.
+- **Historial**: `run_history.RunRecord` (`@dataclass`) + `append_run(output_dir, record)` escribe `output/logs/runs.jsonl` (una línea por ejecución, con operación, estado, duración, contadores del manifest y error). `record_from_manifest()` construye el registro desde el manifest final. CLI y web lo llaman en éxito/error/cancelación; un fallo al escribir el historial se registra pero no rompe el job.
+- **Privacidad**: nunca se escriben tokens de Telegram ni API keys.
+
+### 5.12 Caché del TOC (`core/models/toc.py`)
+
+- **Problema**: `crawl_toc` recorre todo el listado paginado; en sitios grandes son ~54 peticiones por Sync aunque no haya novedades (riesgo de 429/bloqueo).
+- **`TocCache`** (`output/<slug>/.toc.json`): `version`, `source_url`, `fetched_at`, `listing_pages` (primera/última página con capítulos) y `chapters:[{num,title,url}]`.
+- **`_resolve_toc`** (en `pipeline.py`):
+  1. Busca un manifest por `source_url` (variante no-lanzante).
+  2. Con caché y `resume`/sin `force`/sin `refresh_toc`:
+     - **fresca** (`age <= NOVEL_TOC_TTL_HOURS`) → `site_from_cache` (0 peticiones);
+     - **caducada** → `toc_changed` (peek de 2 páginas: `num` máximo o `rel=next` nuevo) → crawl solo si hay novedades; si no, reutiliza y actualiza `fetched_at`.
+  3. Sin caché usable → `crawl_toc` y guarda `.toc.json` (`make_cache`).
+- **Pacer de listado**: `NOVEL_TOC_PACER_MS` (default 1000 ms) se aplica en cada página del crawl/peek.
+- **CLI**: `--refresh-toc` (bypass) y subcomando manual `novel-cli toc [--slug|--all] [--pacer-ms]`. **Migración**: lazy (las novelas existentes crean su caché en el primer Sync).
+
 ## 6. Estado en disco y reanudación
 
 ```
@@ -359,6 +382,8 @@ Excepciones de dominio: `FetchError`, `FetchRateLimitedError`, `DownloadError`, 
 - **HTTP falso con `respx`**: `test_fetcher.py` (429/Retry-After/transient/cool-down/fallback), `test_download.py`, `test_translate.py`.
 - **Web con `TestClient` de FastAPI** (`test_web.py`): se mockea `web.jobs.run_pipeline` para no tocar la red; se prueban rutas, validación, auth por token y descarga de EPUB.
 - **Notificaciones** (`test_notify.py`): `FakeNotifier` captura los eventos del pipeline (hitos + `job_done`/`job_error`), se prueba el formato del resumen/error, la selección por env (`build_default_notifier`/`telegram_enabled`) y que un notifier roto no rompe el pipeline. Nunca se instancia el bot real.
+- **Logging/historial** (`test_logging.py`): `configure_logging` (fichero, niveles, rotación, idempotencia), `_JobIdFilter`, `append_run` (JSONL) y `record_from_manifest`; `create_app()` no escribe ficheros.
+- **Caché del TOC** (`test_toc_cache.py`): round-trip de `TocCache`, `crawl_toc` (páginas + orden), `toc_changed` (sin cambios / capítulo nuevo / página nueva) y `_resolve_toc` (caché fresca → 0 peticiones, peek, `force`/`refresh_toc`).
 - `pytest-asyncio` (`asyncio_mode="auto"`) para las funciones async.
 - `pytest.ini_options.addopts = "-m 'not integration'"`: Playwright queda fuera del CI unitario (marcas `integration` reservadas).
 - Comandos: `uv run pytest -q` y `uv run ruff check .` (rules `E,F,I,UP,B`, line-length 100, target py311).

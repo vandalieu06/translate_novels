@@ -62,9 +62,20 @@
 - **Resumen por job en HTML**: cabecera con la **operación** (Descarga/Sync/Traducción/Re-traducción) y la **duración real** del job (desde `job_started`, incluye scrape/traducción), y líneas con capítulos descargados/totales (y vacíos pendientes), tomos del EPUB original, traducción a `<LANG>` (nuevos/total) y tomos del EPUB traducido. Título y detalle del error se escapan para no romper el formato. No se usa polling ni webhook: solo `Bot.send_message` de salida.
 - **Aislado de fallos**: la notificación nunca interrumpe el pipeline; sin token/chat el comportamiento no cambia (`NullNotifier`). `NOVEL_TELEGRAM_ENABLED=off` la desactiva explícitamente.
 
+### Logs e historial
+- **Log técnico rotativo** (`output/logs/novel-cli.log`): timestamp, nivel, módulo y `job_id`; registra fases, reintentos/backoff, `429`/`Retry-After`, fallback HTTP→Playwright, capítulos vacíos y caché de traducción. `RotatingFileHandler` (5 MiB × 3) e idempotente; se configura solo en los entrypoints (los tests no escriben ficheros).
+- **`-V/--verbose`** sube el fichero (y la consola) a `DEBUG`; sin `-V`, fichero `INFO` y consola solo avisos/errores (no ensucia las barras de `rich`).
+- **Historial `output/logs/runs.jsonl`**: una línea JSON por ejecución (CLI o job web) con `operation`, `status`, `duration_s`, contadores del manifest, `slug`/`title`/`url` y `error`. Independiente del logging; útil para auditar y para depurar.
+- **`job_id` por job** en la web (contextvar + filtro) para correlacionar los logs concurrentes; los tokens/API keys nunca se escriben.
+
+### Caché del TOC
+- **Índice cacheado** en `output/<slug>/.toc.json` (`TocCache`): evita re-escanear el listado completo en cada Sync. Un re-sync con la caché fresca hace **0 peticiones** al listado; caducada, solo un **peek de 2 páginas** (primera/última) para detectar capítulos nuevos.
+- **TTL** `NOVEL_TOC_TTL_HOURS` (default 6 h; `0` = peeks siempre) y **pacer de listado** `NOVEL_TOC_PACER_MS` (default 1000 ms) para reducir `429`.
+- **`--refresh-toc`** fuerza el re-escaneo; el subcomando manual **`novel-cli toc [--slug|--all]`** pre-genera las cachés. Migración **lazy**: las novelas existentes la crean en el siguiente Sync.
+
 ### Calidad
-- **220 tests unitarios sin red** (fixtures + `respx`) y `ruff` limpio.
-- Separación estricta `core/` (dominio puro) vs `cli/` (typer/rich) vs `notifications/` (adaptador de Telegram).
+- **242 tests unitarios sin red** (fixtures + `respx`) y `ruff` limpio.
+- Separación estricta `core/` (dominio puro) vs `cli/` (typer/rich) vs `notifications/` (Telegram) vs `logging_setup`/`run_history` (infraestructura).
 
 ---
 

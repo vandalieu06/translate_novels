@@ -41,10 +41,11 @@ Esto te da un primer volumen al instante sin bajar toda la novela de golpe. Para
 | `-f, --force` | Ignora el manifest y re-descarga (y re-traduce) todo. |
 | `--all` | Descarga **todos** los capítulos de golpe (en vez de un tomo por ejecución). |
 | `--translate-pending` | Traduce **solo los capítulos pendientes** (ya descargados pero sin traducir) sin descargar nuevos; retoma el trabajo colgado desde el manifest previo (sin red). |
+| `--refresh-toc` | Ignora la caché del TOC y re-escanea el listado completo (útil si un sitio inserta capítulos de forma atípica). |
 | `-p, --playwright` | Fuerza Playwright para todo (sin intentar HTTP primero). |
 | `-c, --concurrency <n>` | Workers del pool de descarga (default: 4). |
 | `-tc, --translate-concurrency <n>` | Workers de **traducción en paralelo** (capítulos a la vez). Default inteligente según backend: **1** para Google (protegido), **4** para LibreTranslate local. Tope máximo por defecto: 16. |
-| `-V, --verbose` | Logs detallados y traceback. |
+| `-V, --verbose` | Logs detallados (nivel DEBUG en fichero y consola) y traceback con `rich`. |
 
 ## Ejemplos
 
@@ -97,6 +98,31 @@ output/
 - **Capítulos vacíos**: si el parser devuelve 0 párrafos para un capítulo (página sin contenido parseable), se **reintenta** al final del lote. Si persiste, queda en "pendientes de reintento": se muestra un **aviso** (`AVISO: N capítulo(s) vacío(s) pendientes de reintento`) en el CLI y en la web, y el capítulo **no** cuenta como descargado. Un archivo vacío no cuenta como "ya descargado", así que re-ejecutar el mismo comando lo reintenta automáticamente.
 - En los **EPUBs**, un capítulo sin contenido (raw vacío o sin traducción) no sale en blanco: lleva un **aviso** (`(Chapter content not available…)` en el original, `(Capítulo sin contenido disponible…)` en el traducido). Los tomos del EPUB traducido se **alinean** con los del original aunque falten capítulos.
 - Al re-traducir (`--translate-pending` o con `-t`): si un capítulo estaba vacío y luego se arregló su raw, se **re-traduce** desde el raw corregido (un `translated/` vacío no cuenta como ya traducido). Si el raw sigue vacío, el `translated/` vacío heredado se **limpia** para que el EPUB traducido no incluya capítulos en blanco.
+
+## Caché del TOC
+
+Para no recorrer el listado completo del sitio en cada Sync, el índice de
+capítulos se guarda en `output/<slug>/.toc.json` y se reutiliza:
+
+- **Caché fresca** (< `NOVEL_TOC_TTL_HOURS`, default 6 h): el Sync **no hace
+  ninguna petición** al listado.
+- **Caché caducada**: se consultan solo la primera y la última página del
+  listado (2 peticiones). Si hay capítulos nuevos, se re-escanea todo; si no, se
+  reutiliza la caché actualizando su fecha.
+- **Sin caché** (primer run): se escanea el listado una vez y se guarda. Las
+  novelas ya descargadas crean su `.toc.json` en el siguiente Sync (lazy).
+- `--refresh-toc` fuerza el re-escaneo; `--force` también ignora la caché.
+- Las páginas del listado usan un pacer propio (`NOVEL_TOC_PACER_MS`, default
+  1000 ms) para reducir los `429`.
+
+Para pre-generar las cachés manualmente (por ejemplo, antes de un Sync con
+muchas novelas):
+
+```bash
+uv run novel-cli toc --all                  # todas las novelas con manifest
+uv run novel-cli toc --slug divine-emperor-of-death
+uv run novel-cli toc --all --pacer-ms 2000  # más conservador
+```
 
 ## Códigos de salida
 
@@ -198,6 +224,43 @@ Busca el manifest previo por `source_url`, traduce los capítulos que falten en 
 | `NOVEL_TELEGRAM_ENABLED` | `off`/`false` desactiva las notificaciones aunque haya token+chat. |
 | `NOVEL_WEB_TOKEN` | Si está definida, la web exige este token para las llamadas a la API (cabecera `X-Auth-Token`). Recomendado si expones la web fuera de tu LAN. |
 | `NOVEL_WEB_HOST` / `NOVEL_WEB_PORT` | Valores por defecto de `--host` / `--port` (default: `0.0.0.0` / `8000`). |
+| `NOVEL_LOG_FILE` | Ruta del fichero de log (default: `<output>/logs/novel-cli.log`). |
+| `NOVEL_LOG_LEVEL` | Nivel del fichero de log: `DEBUG`, `INFO`, `WARNING`, `ERROR` (default: `INFO`; `-V` → `DEBUG`). |
+| `NOVEL_LOG_MAX_BYTES` / `NOVEL_LOG_BACKUPS` | Tamaño de rotación y nº de backups (default: 5 MiB × 3). |
+| `NOVEL_TOC_TTL_HOURS` | Horas de validez de la caché del TOC (default: 6; `0` = peeks siempre). |
+| `NOVEL_TOC_PACER_MS` | Pausa entre páginas del listado del TOC (default: 1000 ms). |
+
+## Logs e historial
+
+novel-cli escribe dos artefactos en `output/logs/` para diagnosticar fallos y
+tener constancia de lo ejecutado:
+
+- **`novel-cli.log`** — log técnico rotativo con timestamp, nivel, módulo y
+  `job_id`. Registra fases, reintentos/backoff, `429`/`Retry-After`, fallback
+  HTTP→Playwright, capítulos vacíos, caché de traducción y errores con traza.
+- **`runs.jsonl`** — una línea JSON por ejecución (CLI o job web):
+  ```json
+  {"ts":"...","job_id":"a1b2","operation":"sync","status":"done",
+   "url":"...","slug":"...","title":"...","duration_s":157.2,
+   "chapters_total":1000,"chapters_downloaded":50,"chapters_translated":2,
+   "chapters_empty":0,"epub_original":10,"epub_translated":10,"error":null}
+  ```
+
+- El nivel del fichero es `INFO`; con `-V/--verbose` pasa a `DEBUG` (y la consola
+  muestra también los `DEBUG`). Sin `-V`, la consola solo muestra avisos/errores
+  para no mezclarse con las barras de progreso.
+- En la web, cada registro lleva el `job_id` del job que lo generó.
+- Nunca se escriben en el log tokens de Telegram ni API keys.
+
+Ejemplo de consulta rápida del historial:
+
+```bash
+# Últimas ejecuciones con error
+grep '"status": "error"' output/logs/runs.jsonl
+
+# Seguir el log en vivo
+tail -f output/logs/novel-cli.log
+```
 
 ## Notificaciones por Telegram
 

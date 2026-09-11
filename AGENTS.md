@@ -28,7 +28,7 @@ Python CLI (`novel_cli`) that scrapes web novels, builds EPUBs, and optionally t
 
 ## State & resume
 
-- Per-novel dir `output/<slug>/` holds `.manifest.json` (pydantic index), `raw/<NNNN>.md`, `translated/<NNNN>.md` (only with `-t`), and EPUBs.
+- Per-novel dir `output/<slug>/` holds `.manifest.json` (pydantic index), `.toc.json` (TOC cache; TTL + peek, `--refresh-toc`/`novel-cli toc`), `raw/<NNNN>.md`, `translated/<NNNN>.md` (only with `-t`), and EPUBs.
 - **File existence on disk is the source of truth** for "already downloaded/translated"; the manifest is a cache. `--force` redownloads; `--no-resume` still respects existing files.
 - Download is volume-by-volume (default 50 chapters per run); re-running the same command advances to the next volume. `--all` downloads everything at once. `--translate-pending` translates only pending chapters without downloading.
 
