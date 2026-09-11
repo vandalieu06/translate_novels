@@ -186,6 +186,7 @@ El `.env` no cambia (mismo puerto `5000`, misma key `local`). Para volver al CPU
   NOVEL_TRANSLATE_URL=http://127.0.0.1:5000
   ```
   Así `novel-cli web` y el CLI quedan apuntando a LibreTranslate sin exportar nada en cada arranque. La web muestra el motor activo ("Traducción: LibreTranslate") junto al estado del servidor.
+  Hay un **`.env.example`** en la raíz con todas las variables documentadas y comentadas; cópialo como punto de partida (`cp .env.example .env`) — ver [Variables de entorno](#variables-de-entorno).
 
 #### Concurrencia de traducción: defaults y protección
 
