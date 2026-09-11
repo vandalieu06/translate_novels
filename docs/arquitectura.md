@@ -28,8 +28,12 @@ translate_novels/
 │   │   ├── ws.py               # WebSocket de progreso por job
 │   │   ├── templates/index.html# SPA (HTML)
 │   │   └── static/             # CSS (design MOSH) + JS vanilla, sin build
+│   ├── notifications/          # ADAPTADORES DE NOTIFICACIÓN (presentación)
+│   │   ├── __init__.py         # build_default_notifier() (Telegram o Null)
+│   │   └── telegram.py         # TelegramNotifier (python-telegram-bot, solo envío)
 │   └── core/                   # DOMINIO PURO (sin typer/rich/argv)
 │       ├── config.py           # constantes y default_output()
+│       ├── notifications.py    # NotificationEvent + Protocol Notifier + NullNotifier
 │       ├── models/
 │       │   ├── novel.py        # NovelMetadata, Chapter, SiteMetadata, Volume
 │       │   └── state.py        # Manifest (pydantic) load/save
@@ -67,9 +71,13 @@ flowchart TD
     PIPE --> EPUB["core/services/epub.py<br/>EPUB original (volúmenes)"]
     PIPE --> TR["core/services/translate.py<br/>translated/&lt;NNNN&gt;.md + EPUB traducido"]
     PIPE --> STATE["core/models/state.py<br/>.manifest.json (estado/reanudación)"]
+    PIPE -->|notifier| NOTIF["core/notifications.py<br/>NotificationEvent + Notifier"]
+    CLI --> NOTIF
+    JOBS --> NOTIF
+    NOTIF -.->|implementa| TG["notifications/telegram.py<br/>TelegramNotifier (Bot.send_message)"]
 ```
 
-`core` nunca importa `rich`: expone callbacks `on_status(str)` y `on_progress(done, total)` que la CLI conecta a `rich.progress` (`cli/progress.py`) y la web a eventos WebSocket (`web/jobs.py` → `web/ws.py`).
+`core` nunca importa `rich`: expone callbacks `on_status(str)` y `on_progress(done, total)` que la CLI conecta a `rich.progress` (`cli/progress.py`) y la web a eventos WebSocket (`web/jobs.py` → `web/ws.py`). El **notifier** es otro punto de inyección: `core` define el `Protocol` y el evento, y el adaptador de Telegram vive fuera de `core` (en `notifications/`), por lo que el dominio sigue puro y testeable con un `FakeNotifier`.
 
 ## 4. Flujo de datos (pipeline)
 
@@ -143,6 +151,8 @@ EMPTY_RETRIES = 3                        # reintentos de capítulos vacíos (bac
 ```
 
 Al importar el módulo, `_load_dotenv()` carga un `.env` del directorio de trabajo (o `NOVEL_CLI_ENV_FILE`) en `os.environ` **sin sobrescribir** variables ya exportadas; después se leen todas las constantes. Así la config (p. ej. `NOVEL_TRANSLATE_BACKEND=libre`) puede vivir en un `.env` sin exportar nada al arrancar el CLI o `novel-cli web`.
+
+Notificaciones (leídas en cada llamada para facilitar el test): `telegram_enabled()` (falso si falta `NOVEL_TELEGRAM_BOT_TOKEN` o `NOVEL_TELEGRAM_CHAT_ID`, y desactivable con `NOVEL_TELEGRAM_ENABLED=off`), `telegram_bot_token()` y `telegram_chat_id()`.
 
 ### 5.3 Scraper (`core/scraper/`)
 
@@ -261,6 +271,7 @@ Concurrencia y protección (`core/config.py`): `translate_concurrency_default()`
 - **Descarga por tomos**: `_download_batch()` devuelve el primer tomo pendiente (primeros `volume_size` capítulos del TOC sin archivo en `raw/`) salvo `--all` o `volume_size=None`. Re-ejecutar avanza al siguiente tomo.
 - **EPUB incremental**: `_generate_epubs()` escribe solo los EPUB que falten (o todos con `--force`); al re-ejecutar añade `Novela 51-100.epub` sin reescribir `1-50`.
 - `_load_all_chapters()` carga solo capítulos con archivo en disco → nunca genera EPUB vacíos de tomos no descargados.
+- **Notificaciones**: `run_pipeline(..., notifier=..., operation=...)` emite un `job_started` al inicio y luego `NotificationEvent`s estructurados en los hitos (`scrape_done`, `download_done`, `epub_original_done`, `translate_done`, `epub_translated_done`) con los contadores/idioma en `data`, y un `job_done`/`job_error` terminal con `operation` (descarga/sync/traducción/re-traducción). La emisión va envuelta para que un fallo del notifier nunca rompa el pipeline; `_phase_from_error()` clasifica la excepción (descarga/traducción/epub-manifest) para el aviso.
 
 ### 5.8 CLI (`cli/app.py`, `cli/progress.py`)
 
@@ -273,8 +284,8 @@ Concurrencia y protección (`core/config.py`): `translate_concurrency_default()`
 
 Capa de presentación web (FastAPI + Uvicorn) que reutiliza `core` tal cual. `web/` no contiene lógica de dominio:
 
-- `jobs.py` — **JobManager**: cada job lanza `run_pipeline` como `asyncio.create_task` dentro del event loop de Uvicorn (un job activo a la vez). Construye su propio fetcher/translator por ejecución y los cierra en `finally`. Los callbacks `on_status`/`on_progress` del pipeline publican **eventos** (`{type, phase, done, total, message}`) a un buffer + suscriptores.
-- `routes.py` — API REST: `GET /api/jobs` (lista de jobs con su `state`, para que la UI detecte un job activo), `POST /api/jobs` (valida como el CLI; acepta `target_language`), `GET /api/jobs/{id}`, `POST /api/jobs/{id}/cancel`, `GET /api/novels`, `GET /api/novels/{slug}` (incluye `translated_language`), `GET /api/novels/{slug}/epub/{file}`, `GET /api/novels/{slug}/cover`, `POST /api/novels/{slug}/sync` (hereda idioma y tamaño de tomo), `POST /api/novels/{slug}/retranslate` (solo-traducción de pendientes con opciones del manifest; acepta `{target_language}` y **fuerza la re-traducción** si el idioma cambia), `POST /api/novels/{slug}/volume-size` (cambia el tamaño de tomo y reconstruye los EPUBs desde el disco), `POST /api/novels/{slug}/rebuild` (reconstruye los EPUBs con el mismo `volume_size`, sin cambiar nada: aplica mejoras del builder como la página final), `GET /api/config` (incluye `translate_backend`, `translate_languages` y `default_translate_target`).
+- `jobs.py` — **JobManager**: cada job lanza `run_pipeline` como `asyncio.create_task` dentro del event loop de Uvicorn (un job activo a la vez). Construye su propio fetcher/translator/notifier por ejecución y los cierra en `finally`. Los callbacks `on_status`/`on_progress` del pipeline publican **eventos** (`{type, phase, done, total, message}`) a un buffer + suscriptores.
+- `routes.py` — API REST: `GET /api/jobs` (lista de jobs con su `state`, para que la UI detecte un job activo), `POST /api/jobs` (valida como el CLI; acepta `target_language`), `GET /api/jobs/{id}`, `POST /api/jobs/{id}/cancel`, `GET /api/novels`, `GET /api/novels/{slug}` (incluye `translated_language`), `GET /api/novels/{slug}/epub/{file}`, `GET /api/novels/{slug}/cover`, `POST /api/novels/{slug}/sync` (hereda idioma y tamaño de tomo), `POST /api/novels/{slug}/retranslate` (solo-traducción de pendientes con opciones del manifest; acepta `{target_language}` y **fuerza la re-traducción** si el idioma cambia), `POST /api/novels/{slug}/volume-size` (cambia el tamaño de tomo y reconstruye los EPUBs desde el disco), `POST /api/novels/{slug}/rebuild` (reconstruye los EPUBs con el mismo `volume_size`, sin cambiar nada: aplica mejoras del builder como la página final), `GET /api/config` (incluye `translate_backend`, `translate_languages`, `default_translate_target` y `telegram_enabled`).
 - `ws.py` — WebSocket `/api/jobs/{id}/ws`: reenvía los eventos del job al cliente (reusa el mismo mecanismo de callbacks que `rich`).
 - `app.py` — `create_app(output_dir)` monta static/templates y aplica auth opcional por token (`NOVEL_WEB_TOKEN`, cabecera `X-Auth-Token`). Sirve **4 páginas** (`GET /`, `/biblioteca`, `/ayuda` y `/novela/{slug}`). `main()` arranca Uvicorn (`--host`/`--port`/`--no-browser`).
 - `templates/` + `static/` — UI **multi-página** responsive sin build (CSS con tokens de `DESIGN.md` + JS vanilla por página): `index.html` (descarga + progreso + novelas recientes), `library.html` (grid de portadas), `novel.html` (ficha de novela con acciones y EPUBs) y `help.html` (guía estática de acciones). El JS se parte en módulos compartidos: `common.js` (auth/api/toast/config/escapeHtml), `jobs.js` (job lock, WebSocket + polling, panel de progreso, cancelar, sync/retraducción) y uno por página (`app.js`, `library.js`, `novel.js`). Las páginas leen los datos de la API existente; el slug de la ficha lo obtiene `novel.js` de la ruta.
@@ -282,6 +293,13 @@ Capa de presentación web (FastAPI + Uvicorn) que reutiliza `core` tal cual. `we
 El **sync** (`POST /api/novels/{slug}/sync`) es el "obtener nuevos capítulos" de la biblioteca: carga el `Manifest` del slug, valida su `source_url` y crea un job con `url = manifest.source_url`, `resume=true`, `all=false`, heredando `volume_size` y `translate` (si la novela ya se traducía, los nuevos capítulos también se traducen). Como el pipeline con `resume` y sin `--all` descarga el **siguiente tomo pendiente**, el sync avanza la novela un tomo sin re-pegar la URL.
 
 Sobre puertos: la web escucha en **un único puerto** (default `8000`). El WebSocket no abre otro puerto: usa el mismo del servidor HTTP en `/api/jobs/{id}/ws` (upgrade HTTP→WS). Los demás números que aparecen en los logs de Uvicorn (p. ej. `127.0.0.1:41570`) son **puertos efímeros de origen** del cliente, asignados por el SO a cada conexión TCP y cambiantes en cada request; no hay que abrirlos en el firewall.
+
+### 5.10 Notificaciones (`core/notifications.py`, `notifications/`)
+
+- **Contrato en core**: `NotificationEvent` (`@dataclass`: `kind`, `phase`, `title`, `detail`, `ok`, `data`), `Protocol Notifier` (`notify`/`aclose`) y `NullNotifier`. `core` no importa `telegram`.
+- **Adaptador**: `notifications/telegram.py` implementa `TelegramNotifier` con `telegram.Bot` (python-telegram-bot, solo `send_message`; sin `Updater`/polling/webhook). Acumula los hitos y, al recibir `job_done`, manda **un resumen** en HTML (`parse_mode=ParseMode.HTML`) con la operación y la duración (medida con `time.monotonic()` desde el `job_started` hasta el evento terminal); ante `job_error` avisa de inmediato con la fase. La línea de traducción distingue lo traducido en el run (`translated_new`) del total (`translated_total`). Título y detalle se escapan (`html.escape`) y se recortan. Cada envío va en `try/except` (un fallo de Telegram no afecta al pipeline). `build_default_notifier()` (en `notifications/__init__.py`) devuelve el notifier de Telegram si `config.telegram_enabled()`, o `NullNotifier`.
+- **Inyección**: CLI y web construyen el notifier y lo cierran en su `finally`; `/api/config` expone `telegram_enabled`.
+- **Dependencia**: `python-telegram-bot>=21` (exige `httpx>=0.27,<0.29`, por eso `pyproject.toml` acota `httpx`).
 
 ## 6. Estado en disco y reanudación
 
@@ -340,6 +358,7 @@ Excepciones de dominio: `FetchError`, `FetchRateLimitedError`, `DownloadError`, 
 - **Unit tests sin red**: fixtures HTML en `tests/fixtures/` (`novelfire_cover.html`, `novelfire_toc.html`, `novelfire_chapter.html`, `generic_toc.html`, `generic_no_toc.html`).
 - **HTTP falso con `respx`**: `test_fetcher.py` (429/Retry-After/transient/cool-down/fallback), `test_download.py`, `test_translate.py`.
 - **Web con `TestClient` de FastAPI** (`test_web.py`): se mockea `web.jobs.run_pipeline` para no tocar la red; se prueban rutas, validación, auth por token y descarga de EPUB.
+- **Notificaciones** (`test_notify.py`): `FakeNotifier` captura los eventos del pipeline (hitos + `job_done`/`job_error`), se prueba el formato del resumen/error, la selección por env (`build_default_notifier`/`telegram_enabled`) y que un notifier roto no rompe el pipeline. Nunca se instancia el bot real.
 - `pytest-asyncio` (`asyncio_mode="auto"`) para las funciones async.
 - `pytest.ini_options.addopts = "-m 'not integration'"`: Playwright queda fuera del CI unitario (marcas `integration` reservadas).
 - Comandos: `uv run pytest -q` y `uv run ruff check .` (rules `E,F,I,UP,B`, line-length 100, target py311).
@@ -347,7 +366,7 @@ Excepciones de dominio: `FetchError`, `FetchRateLimitedError`, `DownloadError`, 
 ## 10. Convenciones de código
 
 - Modelos de dominio: `@dataclass`; estado: `pydantic`.
-- Interfaces intercambiables: `typing.Protocol` (`Fetcher`, `SiteAdapter`, `Translator`).
+- Interfaces intercambiables: `typing.Protocol` (`Fetcher`, `SiteAdapter`, `Translator`, `Notifier`).
 - `core` no importa `typer`/`rich`/`argv`; el progreso entra por callbacks.
 - Naming estable en `core/utils/names.py` (`slugify`, `volume_name`, `chapter_filename`).
 - `from __future__ import annotations`, docstrings en módulos, `# noqa` solo cuando aporta.

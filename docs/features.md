@@ -53,13 +53,18 @@
 - **Regenerar EPUBs** (`POST /api/novels/{slug}/rebuild`): botón **♻ Regenerar EPUBs** en la ficha; reconstruye los tomos (original y traducido) desde disco sin cambiar el tamaño ni descargar (aplica mejoras del generador, como la página final `FIN`).
 - **Job lock en el servidor**: la UI consulta `GET /api/jobs` (estados `pending`/`running`) para saber si hay un job activo en vez de fiarse del estado local, y lo permite de nuevo al terminar.
 - **Web multi-página**: `/` (descarga + progreso + novelas recientes), `/biblioteca` (grid de solo portadas, tap → ficha), `/novela/{slug}` (ficha individual: info, acciones Traducir/Sync/Re-traducir/Tomos, progreso del job y listado de EPUBs Original/Traducción) y `/ayuda` (guía estática de qué hace cada acción). JS partido en módulos compartidos (`common.js`, `jobs.js`) + uno por página.
-- **API REST**: `GET /api/jobs`, `POST /api/jobs`, `GET /api/jobs/{id}`, `POST /api/jobs/{id}/cancel`, `GET /api/novels`, `GET /api/novels/{slug}`, descarga de EPUB y portada, `POST /api/novels/{slug}/sync`, `POST /api/novels/{slug}/retranslate`, `POST /api/novels/{slug}/volume-size`, `POST /api/novels/{slug}/rebuild`, `GET /api/config` (incluye `translate_backend`, `translate_languages` y `default_translate_target`).
+- **API REST**: `GET /api/jobs`, `POST /api/jobs`, `GET /api/jobs/{id}`, `POST /api/jobs/{id}/cancel`, `GET /api/novels`, `GET /api/novels/{slug}`, descarga de EPUB y portada, `POST /api/novels/{slug}/sync`, `POST /api/novels/{slug}/retranslate`, `POST /api/novels/{slug}/volume-size`, `POST /api/novels/{slug}/rebuild`, `GET /api/config` (incluye `translate_backend`, `translate_languages`, `default_translate_target` y `telegram_enabled`).
 - **Auth opcional** con `NOVEL_WEB_TOKEN` (cabecera `X-Auth-Token`); `--host`/`--port`/`--no-browser` configurables.
 - Entry points: `novel-cli web` y `novel-cli-web`.
 
+### Notificaciones (Telegram)
+- **Bot opcional** ([python-telegram-bot](https://docs.python-telegram-bot.org/)): con `NOVEL_TELEGRAM_BOT_TOKEN` y `NOVEL_TELEGRAM_CHAT_ID` en el `.env`, cada ejecución del pipeline (CLI o web) envía **un resumen** al terminar y **un aviso inmediato** si falla, con la fase (scrape/descarga/traducción/EPUB).
+- **Resumen por job en HTML**: cabecera con la **operación** (Descarga/Sync/Traducción/Re-traducción) y la **duración real** del job (desde `job_started`, incluye scrape/traducción), y líneas con capítulos descargados/totales (y vacíos pendientes), tomos del EPUB original, traducción a `<LANG>` (nuevos/total) y tomos del EPUB traducido. Título y detalle del error se escapan para no romper el formato. No se usa polling ni webhook: solo `Bot.send_message` de salida.
+- **Aislado de fallos**: la notificación nunca interrumpe el pipeline; sin token/chat el comportamiento no cambia (`NullNotifier`). `NOVEL_TELEGRAM_ENABLED=off` la desactiva explícitamente.
+
 ### Calidad
-- **182 tests unitarios sin red** (fixtures + `respx`) y `ruff` limpio.
-- Separación estricta `core/` (dominio puro) vs `cli/` (typer/rich).
+- **220 tests unitarios sin red** (fixtures + `respx`) y `ruff` limpio.
+- Separación estricta `core/` (dominio puro) vs `cli/` (typer/rich) vs `notifications/` (adaptador de Telegram).
 
 ---
 

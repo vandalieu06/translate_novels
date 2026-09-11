@@ -193,8 +193,65 @@ Busca el manifest previo por `source_url`, traduce los capítulos que falten en 
 | `NOVEL_TRANSLATE_URL` | Base URL de LibreTranslate (default: `http://localhost:5000`). |
 | `NOVEL_TRANSLATE_API_KEY` | API key opcional para LibreTranslate. |
 | `NOVEL_CLI_ENV_FILE` | Ruta al `.env` a cargar al arrancar (default: `.env` del directorio de trabajo). |
+| `NOVEL_TELEGRAM_BOT_TOKEN` | Token del bot de Telegram (de @BotFather) para enviar notificaciones. |
+| `NOVEL_TELEGRAM_CHAT_ID` | `chat_id` destino de las notificaciones (uno). |
+| `NOVEL_TELEGRAM_ENABLED` | `off`/`false` desactiva las notificaciones aunque haya token+chat. |
 | `NOVEL_WEB_TOKEN` | Si está definida, la web exige este token para las llamadas a la API (cabecera `X-Auth-Token`). Recomendado si expones la web fuera de tu LAN. |
 | `NOVEL_WEB_HOST` / `NOVEL_WEB_PORT` | Valores por defecto de `--host` / `--port` (default: `0.0.0.0` / `8000`). |
+
+## Notificaciones por Telegram
+
+Si no quieres quedarte pendiente de la web/terminal, el CLI puede avisarte por
+Telegram al terminar cada sync/descarga (y al fallar). Usa
+[python-telegram-bot](https://docs.python-telegram-bot.org/) **solo para enviar**
+mensajes: no hace falta exponer nada ni dejar un proceso de bot corriendo.
+
+### Configuración
+
+1. Crea un bot con [@BotFather](https://t.me/BotFather) y copia el **token**.
+2. Obtén tu **chat_id** (p. ej. hablándole a [@userinfobot](https://t.me/userinfobot)).
+3. Añádelo al `.env` de la raíz (ya está en `.gitignore`, no se sube a git):
+
+   ```
+   NOVEL_TELEGRAM_BOT_TOKEN=123456:ABC-DEF...
+   NOVEL_TELEGRAM_CHAT_ID=987654321
+   ```
+
+Con eso, **tanto el CLI como `novel-cli web`** envían notificaciones. Para
+desactivarlas sin borrar el token: `NOVEL_TELEGRAM_ENABLED=off`. Si no defines
+token y chat, no se envía nada y el comportamiento es el de siempre.
+
+### Qué se notifica
+
+- **Un resumen** al terminar el job: capítulos descargados (con el total del TOC
+  y los vacíos pendientes), tomos del EPUB original, traducción a `<LANG>` y
+  tomos del EPUB traducido. La cabecera indica la **operación** (Descarga / Sync
+  / Traducción / Re-traducción) y la **duración del job completo** (incluye
+  scrape y traducción; los jobs muy cortos se muestran como `<1s`). En la línea
+  de traducción se distingue lo traducido en este run del total: `50 capítulos`,
+  `2 nuevos (total 1000)` o `sin cambios (total 1000)`.
+- **Un aviso inmediato** si el pipeline falla, con la fase (descarga, traducción,
+  EPUB) y el detalle del error. La fase se infiere del tipo de excepción.
+
+```
+✅ Renacido como el Héroe
+Sync completado · 2m 14s
+
+📥 Descarga: 50/512 capítulos ⚠️ 2 vacíos
+📚 EPUB original: 1 tomo
+🌐 Traducción ES: 50 capítulos
+📗 EPUB ES: 1 tomo
+```
+
+```
+❌ Error en descarga — Renacido como el Héroe
+HTTP 429 tras 3 reintentos
+tras 12s
+```
+
+Los mensajes se envían en **HTML** (título en negrita); el título y el detalle
+del error se escapan para no romper el formato. Los fallos de Telegram (sin red,
+token inválido) se registran pero **nunca** interrumpen la descarga/traducción.
 
 ## Interfaz web (`novel-cli web`)
 
@@ -235,6 +292,7 @@ La web se organiza en varias páginas (navegación común: **Descargar · Biblio
 - **Ficha de novela** (`/novela/{slug}`): portada, título/autor, badges (idioma + original / original), % de progreso, aviso de capítulos vacíos, acciones y la lista de **EPUBs** (original y traducción) para descargarlos directamente al dispositivo.
 - **Guía de acciones** (`/ayuda`): resumen de qué hace cada acción.
 - **Cancelar** un job en curso.
+- **Notificaciones por Telegram** (opcional): con `NOVEL_TELEGRAM_BOT_TOKEN` y `NOVEL_TELEGRAM_CHAT_ID` en el `.env`, cada job avisa al terminar (resumen) y al fallar; ver [Notificaciones por Telegram](#notificaciones-por-telegram).
 - **Un job activo a la vez**: al lanzar un job nuevo, la UI consulta `GET /api/jobs` en el servidor y bloquea "Lanzar descarga"/"Sync" mientras exista un job en estado `pending` o `running`. Al terminar (listo/error/cancelado) se puede lanzar otro inmediatamente.
 
 ### Nota sobre puertos y WebSocket
