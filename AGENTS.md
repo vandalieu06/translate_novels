@@ -2,12 +2,59 @@
 
 Python CLI (`novel_cli`) that scrapes web novels, builds EPUBs, and optionally translates to Spanish (Google free endpoint or local LibreTranslate). Spanish docs in `docs/` are authoritative (`arquitectura.md` = technical reference, `uso.md` = user guide); `specs/` holds the **versioned plan** (`specs/0.1.0/` base, `specs/0.1.1/` current changes).
 
-## Specs-driven workflow (obligatorio)
+## Flujo Spec-Driven Development (SDD) — Obligatorio
 
-- **Planificar antes de codificar**: toda feature o fix nuevo se documenta primero en un spec de `specs/` (carpeta versionada) siguiendo el formato estándar (`NN-tema.md` con Propósito / Contexto / Cambio propuesto / Decisión técnica / Archivos afectados / Tests / Criterios de aceptación; ver `specs/0.1.1/00-changelog.md`).
-- **No se escribe código sin spec**: si llega una petición de cambio no documentada, el primer paso es redactar/actualizar su spec y confirmarlo con el usuario antes de implementar.
-- Los specs viven en `specs/<version>/`; los cambios nuevos se registran en la versión en curso (`00-changelog.md`) y al liberar un conjunto se bumpa la versión de specs.
-- Al terminar: marcar el spec como *implementado/aceptado*, actualizar `docs/` (`arquitectura.md`, `uso.md`, `features.md`) y anotar el commit en el changelog. `docs/` sigue siendo la referencia autoritativa del estado; `specs/` es el contrato/plan por versión.
+1. **Regla de oro:** prohibido crear o modificar código fuente sin una spec APROBADA por el
+   usuario. Si llega un cambio sin documentar, el primer paso es escribir/actualizar su spec
+   y confirmarla antes de implementar.
+
+2. **Creación de spec:** crea `specs/<version>/NN-tema.md` con este frontmatter YAML (es la
+   **fuente de verdad** del estado):
+
+   ```yaml
+   ---
+   code: "NN"
+   title: "Título conciso"
+   project: "novel_cli"
+   status: proposed          # proposed | approved | in-progress | completed
+   version: "<version>"
+   date: YYYY-MM-DD
+   tags: [spec, sdd]
+   affected_files:
+     - src/novel_cli/...
+   ---
+   ```
+
+   El cuerpo usa estas secciones: Purpose / Context / Proposed change / Technical decision /
+   Affected files / Tests / Acceptance criteria. La spec describe **un** cambio; si supera
+   ~300 líneas, divídela en varias specs. El estado completo del sistema vive en `docs/`
+   (`arquitectura.md` = referencia técnica, `uso.md` = guía de usuario, `features.md`).
+
+3. **Pausa dura (human-in-the-loop):** al dejar la spec en `status: proposed`, DETÉN la
+   ejecución, muestra un resumen y espera confirmación explícita. No pases a `in-progress`
+   ni toques código hasta que el usuario apruebe.
+
+4. **Implementación:** con la aprobación, cambia la spec a `status: in-progress` e implementa
+   el código y los tests descritos en ella.
+
+5. **Cierre:** cuando los Acceptance criteria estén cumplidos, cambia la spec a
+   `status: completed`, actualiza la documentación viva en `docs/` y anota el cambio y el
+   hash del commit en `specs/<version>/00-changelog.md`.
+
+Los specs se organizan por versión en `specs/<version>/`; los cambios nuevos se registran en
+la versión actual (`00-changelog.md`) y al liberar un conjunto se sube la versión de specs.
+`docs/` es la referencia autoritativa del estado actual; `specs/` es el contrato/plan por
+versión. El bloque canónico para replicar este flujo está en `Dev/Prompts/sdd-base.md`.
+
+Plantilla de `specs/<version>/00-changelog.md`:
+
+```markdown
+# Changelog — <version>
+
+| Fecha | Spec | Cambio | Commit |
+| ----- | ---- | ------ | ------ |
+| YYYY-MM-DD | NN | Resumen del cambio | <hash> |
+```
 
 ## Commands
 
@@ -42,4 +89,4 @@ Python CLI (`novel_cli`) that scrapes web novels, builds EPUBs, and optionally t
 
 - Domain models: `@dataclass`; state: `pydantic`. Interfaces: `typing.Protocol`. Use `from __future__ import annotations`.
 - The CLI hits Google's free translate endpoint with conservative pacing — never raise translation concurrency. Download pool default `-c 4`, pacer ~300 ms; translation pacer default 1500 ms (env `NOVEL_TRANSLATE_PACER_MS`).
-- Translation backend env: `NOVEL_TRANSLATE_BACKEND` (`google` default | `libre` for local LibreTranslate via `podman compose up -d`), `NOVEL_TRANSLATE_URL`, `NOVEL_TRANSLATE_API_KEY`. `NOVEL_OUTPUT_DIR` sets the default output dir.
+- Translation backend env: `NOVEL_TRANSLATE_BACKEND` (`google` default | `libre` for local LibreTranslate via `podman compose up -d` | `ollama` for a local LLM such as TranslateGemma via `NOVEL_OLLAMA_MODEL`), `NOVEL_TRANSLATE_URL`, `NOVEL_TRANSLATE_API_KEY`. `NOVEL_OUTPUT_DIR` sets the default output dir.

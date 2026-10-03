@@ -51,7 +51,7 @@ translate_novels/
 │       │   ├── toc.py          # fetch_site_metadata(): TOC completo
 │       │   ├── download.py     # pool async + raw/<NNNN>.md + portada
 │       │   ├── epub.py         # build_epub() + generate_volumes()
-│       │   ├── translate.py    # GoogleFreeTranslator + chunking + caché
+│       │   ├── translate.py    # Google/LibreTranslate/Ollama + chunking + caché
 │       │   └── pipeline.py     # orquesta scrape→download→epub→translate→pack
 │       └── utils/
 │           ├── names.py        # slugify, naming de volúmenes/capítulos
@@ -138,8 +138,8 @@ Constantes de red/retry heredadas de Readest y `default_output()`:
 
 ```python
 CHAPTER_REQUEST_MIN_INTERVAL_MS = 300   # pacer de descarga
-TRANSLATE_REQUEST_MIN_INTERVAL_MS = ...  # pacer traducción: 1500 (google) / 250 (libre), env NOVEL_TRANSLATE_PACER_MS
-DEFAULT_TRANSLATE_CONCURRENCY = 1         # traducción en paralelo: default google
+TRANSLATE_REQUEST_MIN_INTERVAL_MS = ...  # pacer traducción: 1500 (google) / 250 (libre) / 0 (ollama), env NOVEL_TRANSLATE_PACER_MS
+DEFAULT_TRANSLATE_CONCURRENCY = 1         # traducción en paralelo: default google/ollama
 LIBRE_TRANSLATE_CONCURRENCY = 4           # default LibreTranslate local
 TRANSLATE_MAX_CONCURRENCY = 16            # tope de protección (env NOVEL_TRANSLATE_MAX_CONCURRENCY)
 RETRY_TRANSIENT = 2                      # 502/504/timeout → backoff (1s, 2s)
@@ -243,7 +243,7 @@ En el pipeline (`pipeline.py`), `_generate_epubs` acepta `rebuild` (default `Fal
 - `GoogleFreeTranslator` — `GET translate.googleapis.com/translate_a/single?client=gtx&dt=t&sl=auto&tl=<target>&q=<texto>`; concatena los `segment[0]` de `data[0]`. Retry/pacing propios (pacer 1500 ms por defecto, backoff ante 429/5xx honrando `Retry-After`). El `Translator` acepta `target` por llamada (default `es`), igual que LibreTranslate (`payload["target"]`).
 - `translate_paragraphs()` — traduce párrafo a párrafo con chunking (`split_text_by_words`, ~400 palabras) y **reensamblado 1:1** (los párrafos vacíos no llaman al endpoint).
 - `translate_chapters(...)` — caché en `translated/<NNNN>.md`; solo traduce lo que falta; actualiza `manifest.chapters_translated`. **Paraleliza capítulos** con `concurrency` (patrón `asyncio.Semaphore` + `gather`, igual que la descarga); el `Pacer`/`CooldownGate` compartidos limitan el ritmo global de peticiones incluso en paralelo. Los capítulos **vacíos** (sin contenido en `raw/`) no se traducen ni se marcan como traducidos; un `translated/<NNNN>.md` **vacío** (heredado de cuando el raw estaba vacío) **no cuenta como ya traducido** — si el raw tiene contenido se re-traduce, y si el raw sigue vacío se limpia (para que el EPUB traducido no incluya capítulos en blanco).
-- `OllamaTranslator` — stub opcional (no es el backend por defecto).
+- `OllamaTranslator` — backend opcional de **LLM local** (`NOVEL_TRANSLATE_BACKEND=ollama`): `POST /api/chat` con el prompt oficial de TranslateGemma (una user message, modelo default `translategemma:4b`), timeout propio (`NOVEL_OLLAMA_TIMEOUT`, 300 s) y `keep_alive`. El modelo devuelve una línea por párrafo; si no cuadra el recuento, reintenta con una instrucción *"Preserve the paragraph breaks"* y, si persiste, traduce **línea a línea** (un párrafo por llamada) con un `WARNING` (nunca falla el job ni deja párrafos vacíos). `Pacer` 0 y concurrencia 1 (una GPU).
 
 Decisión de caché por capítulo (no re-traduce lo ya hecho; un `translated/` vacío no cuenta):
 
@@ -264,7 +264,7 @@ sequenceDiagram
 
 **Idioma destino**: `config.TRANSLATE_TARGET_LANGUAGES` (código→etiqueta) es la lista curada (`es, en, fr, de, it, pt, ru, ja, ko, zh`); default `config.translate_target_default()` (env `NOVEL_TRANSLATE_TARGET`). El target viaja por `run_pipeline(..., target)` → `translate_chapters(target=...)` y se persiste en `manifest.translated_language` (compatible con manifests viejos: `translated=True` sin idioma ⇒ `es`). El sufijo de los EPUB traducidos y el `language=` del metadato usan el target (no `(ES)` fijo); `rebuild_volumes` los reconstruye con el idioma guardado.
 
-Concurrencia y protección (`core/config.py`): `translate_concurrency_default()` devuelve **1** para `google` y **4** para `libre` (o `NOVEL_TRANSLATE_CONCURRENCY` si se define). `effective_translate_concurrency(requested)` es la capa de protección: **fuerza 1** si el backend es `google` (evita rate-limit) y limita a `TRANSLATE_MAX_CONCURRENCY` (16) para `libre`. El pacer default es 1500 ms (google) / 250 ms (libre), sobrescribible por `NOVEL_TRANSLATE_PACER_MS`. Ambos se aplican en `run_pipeline` (y en `--translate-pending`).
+Concurrencia y protección (`core/config.py`): `translate_concurrency_default()` devuelve **1** para `google`/`ollama` y **4** para `libre` (o `NOVEL_TRANSLATE_CONCURRENCY` si se define). `effective_translate_concurrency(requested)` es la capa de protección: **fuerza 1** si el backend es `google` o `ollama` (rate-limit / una GPU) y limita a `TRANSLATE_MAX_CONCURRENCY` (16) para `libre`. El pacer default es 1500 ms (google) / 250 ms (libre) / 0 (ollama), sobrescribible por `NOVEL_TRANSLATE_PACER_MS`. El `source` de cada capítulo viaja desde `manifest.language_code` (`"auto"` → el default del backend: `en` para Ollama). Ambos se aplican en `run_pipeline` (y en `--translate-pending`).
 
 ### 5.7 Pipeline (`core/services/pipeline.py`)
 
@@ -275,14 +275,32 @@ Concurrencia y protección (`core/config.py`): `translate_concurrency_default()`
 - `_load_all_chapters()` carga solo capítulos con archivo en disco → nunca genera EPUB vacíos de tomos no descargados.
 - **Notificaciones**: `run_pipeline(..., notifier=..., operation=...)` emite un `job_started` al inicio y luego `NotificationEvent`s estructurados en los hitos (`scrape_done`, `download_done`, `epub_original_done`, `translate_done`, `epub_translated_done`) con los contadores/idioma en `data`, y un `job_done`/`job_error` terminal con `operation` (descarga/sync/traducción/re-traducción). La emisión va envuelta para que un fallo del notifier nunca rompa el pipeline; `_phase_from_error()` clasifica la excepción (descarga/traducción/epub-manifest) para el aviso.
 
-### 5.8 CLI (`cli/app.py`, `cli/progress.py`)
+### 5.8 Importación de PDFs (`core/services/pdf_import.py`)
 
-- `cli/app.py` expone dos apps typer separadas y `main()` despacha: `novel-cli <url>` (comando por defecto `run`) y `novel-cli web`.
+Reutiliza **pdf-to-epub** como librería (dependencia `pdf-to-epub` en `pyproject.toml`,
+editable desde `../pdf-to-epub`):
+
+- `convert_pdf(pdf_path, workdir, ...)`: llama a `pdf_to_epub.core.pipeline.run()` con
+  `keep_intermediate=True` (CPU intensivo; en la web se ejecuta en `asyncio.to_thread`) y a
+  `extract_docx_chapters(docx_path)` → mapea `TextChapter` a `Chapter` (párrafos planos).
+- `run_pdf_pipeline(...)`: genera el **EPUB original** (el de pdf-to-epub, formato rico),
+  guarda `source.pdf` + portada, escribe `raw/<NNNN>.md` y, si `target != source`, traduce
+  (`translate_chapters(source=...)`) y genera el EPUB traducido con el builder de novel_cli.
+- `Manifest.source_pdf` distingue novelas PDF de web: `rebuild_volumes`/`volume-size`
+  regeneran **solo el traducido** y conservan intacto el original rico.
+- Reutiliza los helpers del pipeline (ahora públicos): `generate_epubs`,
+  `build_epub_chapters`, `load_all_from_disk`, `translated_placeholder`,
+  `cleanup_orphan_epubs`.
+
+### 5.9 CLI (`cli/app.py`, `cli/progress.py`)
+
+- `cli/app.py` expone apps typer separadas y `main()` despacha: `novel-cli <url>` (comando por defecto `run`), `novel-cli pdf`, `novel-cli web` y `novel-cli toc`.
 - `run(url, -o, -v, -t, --resume/--no-resume, -f, --all, -p, -c, -V)`.
+- `pdf(file, --source, -t, --target, -v, -o)`.
 - Validación: URL http(s), `-v ∈ {50, 100}`, `-c ≥ 1` → exit 1.
 - `ProgressUI` (`cli/progress.py`) conecta `on_status`/`on_progress` de core a barras `rich.progress` (descarga, traducción, EPUB).
 
-### 5.9 Web (`web/`)
+### 5.10 Web (`web/`)
 
 Capa de presentación web (FastAPI + Uvicorn) que reutiliza `core` tal cual. `web/` no contiene lógica de dominio:
 
@@ -372,8 +390,8 @@ Excepciones de dominio: `FetchError`, `FetchRateLimitedError`, `DownloadError`, 
 ## 8. Concurrencia y pacing
 
 - Descarga: `asyncio.Semaphore` (default 4 workers) + `Pacer` compartido (300 ms) → ~3.3 req/s agregadas.
-- Traducción: `asyncio.Semaphore` (default 1 google / 4 libre, `-tc`) + `Pacer` compartido (1500 ms google / 250 ms libre). El pacer limita el ritmo **agregado global** de peticiones, por lo que el paralelismo solapa latencia/CPU sin disparar el rate global.
-- Protección: `effective_translate_concurrency()` fuerza 1 para `google` (no quemar el endpoint gratuito) y topa en `TRANSLATE_MAX_CONCURRENCY` (16) para `libre`.
+- Traducción: `asyncio.Semaphore` (default 1 google/ollama / 4 libre, `-tc`) + `Pacer` compartido (1500 ms google / 250 ms libre / 0 ollama). El pacer limita el ritmo **agregado global** de peticiones, por lo que el paralelismo solapa latencia/CPU sin disparar el rate global.
+- Protección: `effective_translate_concurrency()` fuerza 1 para `google` (no quemar el endpoint gratuito) y `ollama` (una GPU) y topa en `TRANSLATE_MAX_CONCURRENCY` (16) para `libre`.
 - Cool-down de pool ante 429: `CooldownGate` compartido (tope 30 s) frena a todos los workers.
 
 ## 9. Testing

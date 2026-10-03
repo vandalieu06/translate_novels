@@ -286,6 +286,158 @@ def _make_run_app() -> typer.Typer:
     return app
 
 
+def _make_pdf_app() -> typer.Typer:
+    """App para `novel-cli pdf`: importa un PDF de novela (EPUB + traduccion opcional)."""
+    app = typer.Typer(
+        name="pdf",
+        help="Importa un PDF de novela: EPUB original (pdf-to-epub) y traduccion "
+        "opcional al idioma destino.",
+        no_args_is_help=True,
+        add_completion=False,
+    )
+
+    @app.command()
+    def convert(
+        file: Annotated[Path, typer.Argument(help="PDF de la novela")],
+        output: Annotated[
+            str | None,
+            typer.Option(
+                "--output", "-o",
+                help="Directorio de salida (default: core/config.default_output)",
+            ),
+        ] = None,
+        source: Annotated[
+            str,
+            typer.Option(
+                "--source",
+                help="Idioma del PDF (default: es; disponibles: "
+                f"{', '.join(config.SOURCE_LANGUAGES)})",
+            ),
+        ] = "es",
+        translate: Annotated[
+            bool,
+            typer.Option(
+                "--translate", "-t",
+                help="Traducir al idioma destino y generar el EPUB traducido",
+            ),
+        ] = False,
+        target: Annotated[
+            str,
+            typer.Option(
+                "--target",
+                help="Idioma destino de la traduccion (default: "
+                f"{config.translate_target_default()}; "
+                f"disponibles: {', '.join(config.TRANSLATE_TARGET_LANGUAGES)})",
+            ),
+        ] = config.translate_target_default(),
+        volume_size: Annotated[
+            int,
+            typer.Option(
+                "--volume-size", "-v",
+                help="Capitulos por tomo del EPUB traducido (default: 50)",
+            ),
+        ] = config.DEFAULT_VOLUME_SIZE,
+        verbose: Annotated[
+            bool,
+            typer.Option("--verbose", "-V", help="Logs detallados"),
+        ] = False,
+    ) -> None:
+        """Convierte un PDF y opcionalmente lo traduce."""
+        from novel_cli.core.services.pdf_import import (
+            PdfImportError,
+            run_pdf_pipeline,
+        )
+
+        if not file.is_file():
+            _fail(f"el PDF no existe: {file}", EXIT_VALIDATION)
+        if file.suffix.lower() != ".pdf":
+            _fail("el archivo debe tener extension .pdf", EXIT_VALIDATION)
+        if source not in config.SOURCE_LANGUAGES:
+            _fail(
+                f"--source no soportado: {source} (disponibles: "
+                f"{', '.join(config.SOURCE_LANGUAGES)})",
+                EXIT_VALIDATION,
+            )
+        if target not in config.TRANSLATE_TARGET_LANGUAGES:
+            _fail(
+                f"--target no soportado: {target} (disponibles: "
+                f"{', '.join(config.TRANSLATE_TARGET_LANGUAGES)})",
+                EXIT_VALIDATION,
+            )
+        if volume_size not in (50, 100, 150, 200):
+            _fail("--volume-size solo acepta 50, 100, 150 o 200", EXIT_VALIDATION)
+
+        error_console = Console(stderr=True)
+        if verbose:
+            install_traceback(console=error_console)
+
+        output_dir = Path(output).expanduser() if output else config.default_output()
+        configure_logging(output_dir=output_dir, verbose=verbose)
+        JOB_ID.set("pdf")
+        started = time.monotonic()
+        translator = build_default_translator() if translate else None
+
+        def _record(status: str, *, error: str | None = None) -> None:
+            elapsed = time.monotonic() - started
+            try:
+                append_run(
+                    output_dir,
+                    RunRecord(
+                        operation="pdf",
+                        status=status,
+                        url=str(file),
+                        duration_s=round(elapsed, 2),
+                        error=error,
+                    ),
+                )
+            except Exception:  # noqa: BLE001 - el historial no debe romper el CLI
+                logger.exception("no se pudo escribir el historial de ejecuciones")
+
+        ui = ProgressUI(verbose=verbose)
+        try:
+            with ui:
+                ui.status(f"Salida: {output_dir.resolve()}")
+
+                async def _pipeline() -> object:
+                    try:
+                        return await run_pdf_pipeline(
+                            pdf_path=file,
+                            output_dir=output_dir,
+                            source_language=source,
+                            translate=translate,
+                            target_language=target,
+                            volume_size=volume_size,
+                            translator=translator,
+                            on_status=ui.status,
+                            on_epub_progress=ui.callback("epub", "Generando EPUBs"),
+                            on_translate_progress=ui.callback(
+                                "translate", f"Traduciendo a {target}"
+                            ),
+                        )
+                    finally:
+                        if translator is not None:
+                            await translator.aclose()
+
+                manifest = asyncio.run(_pipeline())
+        except typer.Exit:
+            raise
+        except PdfImportError as exc:
+            _record("error", error=str(exc))
+            _fail(f"Error de importacion PDF: {exc}", EXIT_VALIDATION)
+        except TranslateError as exc:
+            _record("error", error=str(exc))
+            _fail(f"Error de traduccion: {exc}", EXIT_TRANSLATION)
+        except Exception as exc:  # noqa: BLE001 - fallback a codigo 4
+            _record("error", error=str(exc))
+            _fail(f"Error inesperado: {exc}", EXIT_EPUB)
+
+        _record("done")
+        typer.echo(f"Listo: {manifest.title} -> {output_dir / manifest.slug}")
+        raise typer.Exit(EXIT_OK)
+
+    return app
+
+
 def _make_web_app() -> typer.Typer:
     """App para `novel-cli web`: lanza el servidor web."""
     app = typer.Typer(
@@ -426,6 +578,7 @@ async def _rebuild_tocs(targets: list[Path], pacer_ms: int) -> int:
 
 
 run_app = _make_run_app()
+pdf_app = _make_pdf_app()
 web_app = _make_web_app()
 toc_app = _make_toc_app()
 
@@ -449,6 +602,8 @@ def main() -> None:
         web_app(args[1:])
     elif args and args[0] == "toc":
         toc_app(args[1:])
+    elif args and args[0] == "pdf":
+        pdf_app(args[1:])
     else:
         run_app(args)
 

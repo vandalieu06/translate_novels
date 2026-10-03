@@ -44,7 +44,7 @@ Esto te da un primer volumen al instante sin bajar toda la novela de golpe. Para
 | `--refresh-toc` | Ignora la caché del TOC y re-escanea el listado completo (útil si un sitio inserta capítulos de forma atípica). |
 | `-p, --playwright` | Fuerza Playwright para todo (sin intentar HTTP primero). |
 | `-c, --concurrency <n>` | Workers del pool de descarga (default: 4). |
-| `-tc, --translate-concurrency <n>` | Workers de **traducción en paralelo** (capítulos a la vez). Default inteligente según backend: **1** para Google (protegido), **4** para LibreTranslate local. Tope máximo por defecto: 16. |
+| `-tc, --translate-concurrency <n>` | Workers de **traducción en paralelo** (capítulos a la vez). Default inteligente según backend: **1** para Google y Ollama (protegido / una GPU), **4** para LibreTranslate local. Tope máximo por defecto: 16. |
 | `-V, --verbose` | Logs detallados (nivel DEBUG en fichero y consola) y traceback con `rich`. |
 
 ## Ejemplos
@@ -68,6 +68,11 @@ novel-cli https://example.com/novel -o /media/lecturas -c 8
 
 # Re-descargar desde cero
 novel-cli https://example.com/novel --force
+
+# Importar un PDF (webnovel o light novel con ilustraciones): EPUB original + traduccion
+novel-cli pdf "mi-novela.pdf"                     # solo conversión (idioma es)
+novel-cli pdf "mi-novela.pdf" --source en -t      # original EN + traducido a es
+novel-cli pdf "mi-novela.pdf" --source en -t --target fr
 ```
 
 ## Estructura de salida
@@ -136,7 +141,7 @@ uv run novel-cli toc --all --pacer-ms 2000  # más conservador
 
 ## Traducción
 
-- Backend por defecto: endpoint gratuito `translate.googleapis.com/translate_a/single` (`client=gtx`), sin clave ni token.
+- Backend por defecto: endpoint gratuito `translate.googleapis.com/translate_a/single` (`client=gtx`), sin clave ni token. Alternativas por env: LibreTranslate local (`libre`) y un LLM local con Ollama (`ollama`, ver más abajo).
 - Traduce **párrafo a párrafo** con chunking (~400 palabras) y reensamblado 1:1, por lo que el EPUB traducido conserva la estructura del original.
 - Respeta pacing, retry con backoff (5 reintentos, base 5 s) y `Retry-After` (hasta 60 s) ante 429/503, con un cool-down compartido para toda la pasada de traducción. Si el endpoint te limita de forma persistente, saldrá con código 3; re-ejecuta más tarde para continuar (la caché evita re-traducir lo hecho).
 - **Traducción en paralelo**: los capítulos se traducen a la vez (`-tc, --translate-concurrency`). El pacer sigue limitando el ritmo global de peticiones, así que el paralelismo no "quema" el endpoint.
@@ -194,8 +199,36 @@ El `.env` no cambia (mismo puerto `5000`, misma key `local`). Para volver al CPU
 |---|---|---|---|
 | `google` | **1** | 1500 ms | Fuerza concurrencia = **1** (ignora `-tc`) para no arriesgar rate-limit. |
 | `libre` | **4** | 250 ms | Tope máximo (default **16**, env `NOVEL_TRANSLATE_MAX_CONCURRENCY`) para no saturar el servidor local. |
+| `ollama` | **1** | 0 ms | Fuerza concurrencia = **1** (una GPU); sin rate-limit local. |
 
 Con LibreTranslate local y una CPU potente puedes subir la concurrencia (`-tc 8`, `-tc 16`) y bajar el pacer a ~100–500 ms (`NOVEL_TRANSLATE_PACER_MS`) para traducir 100 capítulos en mucho menos tiempo sin ir capítulo a capítulo.
+
+### Traducción local con un LLM (Ollama)
+
+Si quieres una redacción más fluida/coherente que la de un motor NMT, puedes
+traducir con un **LLM local** vía [Ollama](https://ollama.com). No añade
+dependencias Python: se habla por HTTP con el servidor de Ollama.
+
+```bash
+# 1. Instalar Ollama y descargar el modelo (una vez)
+ollama pull translategemma:4b     # ~3.3 GB; 12b y 27b tambien disponibles
+
+# 2. Traducir con el LLM local
+NOVEL_TRANSLATE_BACKEND=ollama uv run novel-cli -t <url>
+```
+
+Usa el **prompt oficial de TranslateGemma** (`translategemma`) y el idioma
+origen de `manifest.language_code` (`"auto"` → `en`). El modelo devuelve una
+línea por párrafo; si no respeta la estructura, reintenta con una instrucción
+extra y, si persiste, traduce **línea a línea** (un párrafo por llamada) sin
+dejar párrafos vacíos, registrando un `WARNING` (nunca
+falla el job). Configuración por env: `NOVEL_OLLAMA_URL`,
+`NOVEL_OLLAMA_MODEL`, `NOVEL_OLLAMA_SOURCE_LANG`, `NOVEL_OLLAMA_TIMEOUT`,
+`NOVEL_OLLAMA_MAX_WORDS_PER_CHUNK`, `NOVEL_OLLAMA_KEEP_ALIVE`.
+
+> Rendimiento medido con `translategemma:4b` en una RTX 3060: ~1–1,5 min por
+> capítulo (~3.500 palabras). La primera llamada en frío tarda más (carga del
+> modelo); `NOVEL_OLLAMA_KEEP_ALIVE` lo mantiene cargado entre chunks.
 
 ### Retomar traducción pendiente (`--translate-pending`)
 
@@ -216,9 +249,15 @@ Busca el manifest previo por `source_url`, traduce los capítulos que falten en 
 | `NOVEL_TRANSLATE_PACER_MS` | Milisegundos entre peticiones de traducción (default según backend: 1500 google / 250 libre). |
 | `NOVEL_TRANSLATE_CONCURRENCY` | Workers de traducción explícitos (0 = auto según backend). |
 | `NOVEL_TRANSLATE_MAX_CONCURRENCY` | Tope máximo de concurrencia de traducción (default: 16). |
-| `NOVEL_TRANSLATE_BACKEND` | Backend de traducción: `google` (default) o `libre`. |
+| `NOVEL_TRANSLATE_BACKEND` | Backend de traducción: `google` (default), `libre` o `ollama`. |
 | `NOVEL_TRANSLATE_URL` | Base URL de LibreTranslate (default: `http://localhost:5000`). |
 | `NOVEL_TRANSLATE_API_KEY` | API key opcional para LibreTranslate. |
+| `NOVEL_OLLAMA_URL` | Base URL de Ollama (default: `http://localhost:11434`). |
+| `NOVEL_OLLAMA_MODEL` | Modelo de Ollama (default: `translategemma:4b`). |
+| `NOVEL_OLLAMA_SOURCE_LANG` | Idioma origen cuando el manifest no lo indica (default: `en`). |
+| `NOVEL_OLLAMA_TIMEOUT` | Timeout por petición en segundos (default: `300`). |
+| `NOVEL_OLLAMA_MAX_WORDS_PER_CHUNK` | Palabras por chunk (default: `400`). |
+| `NOVEL_OLLAMA_KEEP_ALIVE` | Tiempo que Ollama mantiene el modelo cargado (default: `10m`). |
 | `NOVEL_CLI_ENV_FILE` | Ruta al `.env` a cargar al arrancar (default: `.env` del directorio de trabajo). |
 | `NOVEL_TELEGRAM_BOT_TOKEN` | Token del bot de Telegram (de @BotFather) para enviar notificaciones. |
 | `NOVEL_TELEGRAM_CHAT_ID` | `chat_id` destino de las notificaciones (uno). |

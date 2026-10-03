@@ -73,28 +73,68 @@ TRANSLATE_TARGET_LANGUAGES: dict[str, str] = {
     "zh": "中文",
 }
 
+# Nombre del idioma en ingles (para el prompt del backend LLM, p. ej.
+# "English (en) to Spanish (es)"). Fallback: el propio codigo.
+TRANSLATE_LANGUAGE_NAMES_EN: dict[str, str] = {
+    "es": "Spanish",
+    "en": "English",
+    "fr": "French",
+    "de": "German",
+    "it": "Italian",
+    "pt": "Portuguese",
+    "ru": "Russian",
+    "ja": "Japanese",
+    "ko": "Korean",
+    "zh": "Chinese",
+}
+
+
+def language_name_en(code: str) -> str:
+    """Nombre en ingles del idioma; si no esta en la lista, devuelve el codigo."""
+    return TRANSLATE_LANGUAGE_NAMES_EN.get(code, code)
+
 DEFAULT_VOLUME_SIZE = 50
 
-# Selector de backend de traduccion (para pruebas locales con LibreTranslate).
-TRANSLATE_BACKEND = os.environ.get("NOVEL_TRANSLATE_BACKEND", "google")  # google | libre
+# Selector de backend de traduccion (para pruebas locales con LibreTranslate o LLM).
+# google | libre | ollama
+TRANSLATE_BACKEND = os.environ.get("NOVEL_TRANSLATE_BACKEND", "google")
 TRANSLATE_URL = os.environ.get("NOVEL_TRANSLATE_URL", "http://localhost:5000")
 TRANSLATE_API_KEY = os.environ.get("NOVEL_TRANSLATE_API_KEY") or None
 
+# Backend LLM local via Ollama (default: TranslateGemma 4B, prompt oficial).
+OLLAMA_URL = os.environ.get("NOVEL_OLLAMA_URL", "http://localhost:11434")
+OLLAMA_MODEL = os.environ.get("NOVEL_OLLAMA_MODEL", "translategemma:4b")
+OLLAMA_SOURCE_LANG = os.environ.get("NOVEL_OLLAMA_SOURCE_LANG", "en")
+OLLAMA_TIMEOUT_SECONDS = _int_env("NOVEL_OLLAMA_TIMEOUT", 300)
+OLLAMA_MAX_WORDS_PER_CHUNK = _int_env("NOVEL_OLLAMA_MAX_WORDS_PER_CHUNK", 400)
+OLLAMA_KEEP_ALIVE = os.environ.get("NOVEL_OLLAMA_KEEP_ALIVE", "10m")
+
 # Traduccion: capa de tiempos conservadora para no quemar el endpoint gratuito.
 # El pacer por defecto depende del backend: conservador (1500ms) para google,
-# agresivo (250ms) para LibreTranslate local (env NOVEL_TRANSLATE_PACER_MS lo sobrescribe).
+# agresivo (250ms) para LibreTranslate local, 0 (local sin rate-limit) para Ollama.
+# Env NOVEL_TRANSLATE_PACER_MS lo sobrescribe.
 DEFAULT_TRANSLATE_PACER_MS = 1500
 LIBRE_TRANSLATE_PACER_MS = 250
+OLLAMA_TRANSLATE_PACER_MS = 0
+
+
+def _default_translate_pacer_ms() -> int:
+    if TRANSLATE_BACKEND == "libre":
+        return LIBRE_TRANSLATE_PACER_MS
+    if TRANSLATE_BACKEND == "ollama":
+        return OLLAMA_TRANSLATE_PACER_MS
+    return DEFAULT_TRANSLATE_PACER_MS
+
+
 TRANSLATE_REQUEST_MIN_INTERVAL_MS = _int_env(
-    "NOVEL_TRANSLATE_PACER_MS",
-    LIBRE_TRANSLATE_PACER_MS if TRANSLATE_BACKEND == "libre" else DEFAULT_TRANSLATE_PACER_MS,
+    "NOVEL_TRANSLATE_PACER_MS", _default_translate_pacer_ms()
 )
 TRANSLATE_RETRY_RATE_LIMIT = 5
 TRANSLATE_BACKOFF_BASE_SECONDS = 5.0
 TRANSLATE_RETRY_AFTER_MAX_SECONDS = 60.0
 
 # Concurrencia de traduccion (capitulos en paralelo).
-# Default inteligente por backend: 4 para LibreTranslate local (CPU alta), 1 para google.
+# Default por backend: 4 para LibreTranslate local (CPU alta), 1 para google/ollama.
 DEFAULT_TRANSLATE_CONCURRENCY = 1
 LIBRE_TRANSLATE_CONCURRENCY = 4
 TRANSLATE_MAX_CONCURRENCY = _int_env("NOVEL_TRANSLATE_MAX_CONCURRENCY", 16)
@@ -111,15 +151,22 @@ def translate_concurrency_default() -> int:
 
 
 def effective_translate_concurrency(requested: int | None) -> int:
-    """Aplica la capa de proteccion: google siempre 1; libre con tope maximo."""
+    """Capa de proteccion: google/ollama siempre 1; libre con tope maximo."""
     value = (
         requested
         if requested is not None and requested > 0
         else translate_concurrency_default()
     )
-    if TRANSLATE_BACKEND == "google":
+    if TRANSLATE_BACKEND in ("google", "ollama"):
         return 1
     return max(1, min(value, TRANSLATE_MAX_CONCURRENCY))
+
+
+def translate_max_words_per_chunk() -> int:
+    """Palabras por chunk de traduccion segun el backend activo."""
+    if TRANSLATE_BACKEND == "ollama":
+        return OLLAMA_MAX_WORDS_PER_CHUNK
+    return DEFAULT_MAX_WORDS_PER_CHUNK
 
 
 def translate_target_default() -> str:
@@ -130,6 +177,22 @@ def translate_target_default() -> str:
 
 def is_valid_translate_target(target: str) -> bool:
     return target in TRANSLATE_TARGET_LANGUAGES
+
+
+# --- Importacion de PDFs ----------------------------------------------------
+# Idiomas origen soportados para PDFs (el usuario lo indica; nunca auto).
+SOURCE_LANGUAGES: dict[str, str] = dict(TRANSLATE_TARGET_LANGUAGES)
+
+UPLOAD_MAX_MB = _int_env("NOVEL_UPLOAD_MAX_MB", 100)
+
+
+def upload_max_bytes() -> int:
+    """Tamano maximo de subida de PDFs (env NOVEL_UPLOAD_MAX_MB)."""
+    return UPLOAD_MAX_MB * 1024 * 1024
+
+
+def is_valid_source_language(code: str) -> bool:
+    return code in SOURCE_LANGUAGES
 
 
 # --- Cache del TOC (indice de capitulos) ------------------------------------

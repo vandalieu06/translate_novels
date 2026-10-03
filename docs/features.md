@@ -26,16 +26,31 @@
 
 ### Traducción
 - **Endpoint gratuito de Google Translate** (`translate_a/single` con `client=gtx`), sin clave ni token.
-- **Backend intercambiable**: backend local **LibreTranslate** (Docker/podman) vía `NOVEL_TRANSLATE_BACKEND=libre`. Config persistente con un `.env` (cargado al arrancar). Con `LT_API_KEYS`/`NOVEL_TRANSLATE_API_KEY` se omite el rate-limit por defecto de LibreTranslate (200 req/día/IP) que rompía re-traducciones largas con 429.
+- **Backend intercambiable**: local **LibreTranslate** (`NOVEL_TRANSLATE_BACKEND=libre`, Docker/podman) o **LLM local vía Ollama** (`ollama`, p. ej. `translategemma:4b`) con el prompt oficial de TranslateGemma, sin dependencias Python extra. Config persistente con un `.env` (cargado al arrancar). Con `LT_API_KEYS`/`NOVEL_TRANSLATE_API_KEY` se omite el rate-limit por defecto de LibreTranslate (200 req/día/IP) que rompía re-traducciones largas con 429.
 - **Aceleración CUDA**: `docker-compose.cuda.yaml` usa la imagen `latest-cuda` con GPU NVIDIA (se lanza con `sudo docker compose`), DNS público fijado para evitar el fallo por MagicDNS de Tailscale.
 - **Párrafo a párrafo** con chunking (~400 palabras) y **reensamblado 1:1**; el EPUB traducido conserva la estructura del original.
 - **Caché en disco** (`translated/<NNNN>.md`): no re-traduce lo ya hecho; retry/pacing ante 429/503. Un `translated/` vacío (heredado de un capítulo sin contenido) no cuenta como traducido: se re-traduce si el raw se arregló y se limpia si sigue vacío.
-- **Traducción en paralelo por lotes** (`-tc/--translate-concurrency`): traduce varios capítulos a la vez con pool async (patrón igual a la descarga). Default inteligente por backend (1 google / 4 libre) y **capa de protección**: google fuerza 1 (no quemar el endpoint), libre topa en 16. El pacer compartido mantiene el ritmo global de peticiones.
+- **Traducción en paralelo por lotes** (`-tc/--translate-concurrency`): traduce varios capítulos a la vez con pool async (patrón igual a la descarga). Default inteligente por backend (1 google/ollama / 4 libre) y **capa de protección**: google y ollama fuerzan 1 (endpoint gratuito / una GPU), libre topa en 16. El pacer compartido mantiene el ritmo global de peticiones.
 - **Idioma destino elegible** (`--target <lang>`): lista curada (`config.TRANSLATE_TARGET_LANGUAGES`: es, en, fr, de, it, pt, ru, ja, ko, zh; env `NOVEL_TRANSLATE_TARGET`). `-t/--translate` genera el EPUB original **y** el traducido (`Novela 1-50 (ES).epub`, sufijo según idioma).
 - **`--translate-pending`**: traduce solo los capítulos pendientes (ya descargados, sin traducir) sin descargar nuevos ni tocar el TOC — ideal para retomar una traducción cortada por rate-limit.
 
+### Importación de PDFs (spec 0.3.0/01)
+- **`novel-cli pdf <archivo>`**: importa un PDF de novela (webnovel o light novel con
+  ilustraciones) reutilizando **pdf-to-epub** como librería.
+- **EPUB original rico**: lo genera pdf-to-epub y conserva imágenes, tablas y formato del
+  PDF (`{titulo}.epub`, un solo tomo). El PDF y la portada se guardan en
+  `output/<slug>/source.pdf` y `output/<slug>/cover.<ext>`.
+- **Texto plano extraído del DOCX** intermedio (`raw/<NNNN>.md`) para traducir y regenerar
+  tomos; el EPUB traducido se genera con el builder de novel_cli (tomos según `--volume-size`).
+- **Traducción opcional**: `-t/--translate` + `--source <lang>` (default `es`) + `--target`;
+  si `target != source` genera el EPUB traducido además del original. Nunca `auto` como origen.
+- **`Manifest.source_pdf`**: distingue novelas PDF de web; `rebuild_volumes`/`volume-size`
+  regeneran **solo el EPUB traducido** y conservan intacto el original rico.
+- **Límite de subida** para la web: `NOVEL_UPLOAD_MAX_MB` (default 100).
+
 ### CLI
 - Comando único `novel-cli <url>` con flags `-o`, `-v`, `-t`, `--resume/--no-resume`, `-f`, `--all`, `-p`, `-c`, `-tc`, `-V`.
+- Comando **`novel-cli pdf <archivo>`** para importar PDFs (con `--source`, `-t`, `--target`, `-v`).
 - **Códigos de salida** `0-4` (éxito, validación, red/descarga, traducción, EPUB/manifest).
 - **Barras de progreso** con `rich` (descarga, traducción, EPUB) y logs detallados con `-V`.
 - Ruta por defecto: env `NOVEL_OUTPUT_DIR` o `./output`.
@@ -53,7 +68,7 @@
 - **Regenerar EPUBs** (`POST /api/novels/{slug}/rebuild`): botón **♻ Regenerar EPUBs** en la ficha; reconstruye los tomos (original y traducido) desde disco sin cambiar el tamaño ni descargar (aplica mejoras del generador, como la página final `FIN`).
 - **Job lock en el servidor**: la UI consulta `GET /api/jobs` (estados `pending`/`running`) para saber si hay un job activo en vez de fiarse del estado local, y lo permite de nuevo al terminar.
 - **Web multi-página**: `/` (descarga + progreso + novelas recientes), `/biblioteca` (grid de solo portadas, tap → ficha), `/novela/{slug}` (ficha individual: info, acciones Traducir/Sync/Re-traducir/Tomos, progreso del job y listado de EPUBs Original/Traducción) y `/ayuda` (guía estática de qué hace cada acción). JS partido en módulos compartidos (`common.js`, `jobs.js`) + uno por página.
-- **API REST**: `GET /api/jobs`, `POST /api/jobs`, `GET /api/jobs/{id}`, `POST /api/jobs/{id}/cancel`, `GET /api/novels`, `GET /api/novels/{slug}`, descarga de EPUB y portada, `POST /api/novels/{slug}/sync`, `POST /api/novels/{slug}/retranslate`, `POST /api/novels/{slug}/volume-size`, `POST /api/novels/{slug}/rebuild`, `GET /api/config` (incluye `translate_backend`, `translate_languages`, `default_translate_target` y `telegram_enabled`).
+- **API REST**: `GET /api/jobs`, `POST /api/jobs`, `GET /api/jobs/{id}`, `POST /api/jobs/{id}/cancel`, `GET /api/novels`, `GET /api/novels/{slug}`, descarga de EPUB y portada, `POST /api/novels/{slug}/sync`, `POST /api/novels/{slug}/retranslate`, `POST /api/novels/{slug}/volume-size`, `POST /api/novels/{slug}/rebuild`, `GET /api/config` (incluye `translate_backend`, `ollama_model`, `translate_languages`, `default_translate_target` y `telegram_enabled`).
 - **Auth opcional** con `NOVEL_WEB_TOKEN` (cabecera `X-Auth-Token`); `--host`/`--port`/`--no-browser` configurables.
 - Entry points: `novel-cli web` y `novel-cli-web`.
 
@@ -74,7 +89,7 @@
 - **`--refresh-toc`** fuerza el re-escaneo; el subcomando manual **`novel-cli toc [--slug|--all]`** pre-genera las cachés. Migración **lazy**: las novelas existentes la crean en el siguiente Sync.
 
 ### Calidad
-- **242 tests unitarios sin red** (fixtures + `respx`) y `ruff` limpio.
+- **254 tests unitarios sin red** (fixtures + `respx`) y `ruff` limpio.
 - Separación estricta `core/` (dominio puro) vs `cli/` (typer/rich) vs `notifications/` (Telegram) vs `logging_setup`/`run_history` (infraestructura).
 
 ---
@@ -85,7 +100,6 @@
 - **CI GitHub Actions**: `uv sync --dev`, `ruff`, `pytest -q` (sin integración) en cada push/PR.
 - **Validar el adaptador genérico en 1-2 sitios reales más** (Royal Road, biquge, Scribble Hub) con fixtures propios por sitio.
 - **`--translate-title`**: traducir también el título de la novela/metadata (hoy se conserva el original).
-- **`OllamaTranslator`** real como backend opcional (inyectable por env/flag), manteniendo Google como default.
 
 ### Medias
 - **Descarga de imágenes dentro de los capítulos** (hoy el EPUB queda autocontenido sin imágenes internas).
