@@ -1242,6 +1242,36 @@ select:focus {
   right: 8px;
 }
 
+.cover-badge-pdf {
+  top: 8px;
+  left: 8px;
+}
+
+.section-separator {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 22px 0 6px;
+  color: var(--text-helper);
+  font-size: 13px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.section-separator::before,
+.section-separator::after {
+  content: "";
+  flex: 1;
+  height: 1px;
+  background: var(--border-default);
+}
+
+.field-hint {
+  margin-top: 6px;
+  font-size: 12px;
+  color: var(--text-helper);
+}
+
 .cover-pct {
   position: absolute;
   bottom: 8px;

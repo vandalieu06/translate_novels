@@ -78,9 +78,13 @@ def create_app(*, output_dir: Path | None = None) -> FastAPI:
             "default_volume_size": config.DEFAULT_VOLUME_SIZE,
             "default_concurrency": config.DEFAULT_CONCURRENCY,
             "translate_backend": config.TRANSLATE_BACKEND,
+            "ollama_model": config.OLLAMA_MODEL,
             "default_translate_target": config.translate_target_default(),
             "translate_languages": config.TRANSLATE_TARGET_LANGUAGES,
             "telegram_enabled": config.telegram_enabled(),
+            "upload_enabled": True,
+            "upload_max_mb": config.UPLOAD_MAX_MB,
+            "source_languages": config.SOURCE_LANGUAGES,
         }
 
     return app

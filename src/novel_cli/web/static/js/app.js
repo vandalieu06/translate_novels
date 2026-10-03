@@ -49,6 +49,27 @@ function setupTranslateField() {
   syncVisibility();
 }
 
+function setupPdfForm() {
+  const form = $("#pdf-form");
+  if (!form) return;
+  form.addEventListener("submit", submitPdfJob);
+  const checkbox = $("#pdf-translate");
+  const langField = $("#pdf-field-language");
+  const syncVisibility = () => {
+    if (langField) langField.hidden = !checkbox.checked;
+  };
+  checkbox.addEventListener("change", syncVisibility);
+  syncVisibility();
+  const sourceLangs = (state.config && state.config.source_languages) || {};
+  const source = $("#pdf-source");
+  if (source) {
+    source.innerHTML = Object.entries(sourceLangs)
+      .map(([code, label]) => `<option value="${code}">${label}</option>`)
+      .join("");
+  }
+  populateLanguageSelect($("#pdf-language"));
+}
+
 document.addEventListener("DOMContentLoaded", async () => {
   $("#job-form").addEventListener("submit", submitJob);
   $("#cancel-btn").addEventListener("click", cancelJob);
@@ -57,6 +78,7 @@ document.addEventListener("DOMContentLoaded", async () => {
   setupTranslateField();
   await loadConfig();
   populateLanguageSelect($("#job-language"));
+  setupPdfForm();
   refreshNovels();
   setInterval(() => {
     if (!state.currentJobId) refreshNovels();

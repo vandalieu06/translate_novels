@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import shutil
 import time
 import uuid
 from collections.abc import Callable
@@ -25,6 +26,7 @@ from novel_cli.core.scraper.fetcher import (
     PlaywrightFetcher,
     get_fetcher,
 )
+from novel_cli.core.services.pdf_import import retranslate_pdf, run_pdf_pipeline
 from novel_cli.core.services.pipeline import run_pipeline
 from novel_cli.core.services.translate import build_default_translator
 from novel_cli.logging_setup import JOB_ID
@@ -105,6 +107,32 @@ class JobManager:
         job.task = task
         return job
 
+    def create_pdf(
+        self,
+        *,
+        filename: str,
+        data: bytes,
+        output_dir: Path | None,
+        options: dict[str, Any],
+    ) -> Job:
+        """Crea un job de PDF: guarda el archivo en staging y lo procesa."""
+        job_id = uuid.uuid4().hex[:12]
+        staging = (output_dir or self.default_output_dir) / ".uploads" / job_id
+        staging.mkdir(parents=True, exist_ok=True)
+        pdf_path = staging / "source.pdf"
+        pdf_path.write_bytes(data)
+        job = Job(
+            id=job_id,
+            url=filename,
+            output_dir=output_dir or self.default_output_dir,
+        )
+        self._jobs[job.id] = job
+        task = asyncio.create_task(
+            self._run(job, {**options, "pdf_path": str(pdf_path)})
+        )
+        job.task = task
+        return job
+
     async def cancel(self, job_id: str) -> bool:
         job = self._jobs.get(job_id)
         if job is None or job.task is None or job.task.done():
@@ -149,9 +177,18 @@ class JobManager:
             logger.exception("no se pudo escribir el historial del job %s", job.id)
 
     async def _run(self, job: Job, options: dict[str, Any]) -> None:
+        operation = str(options.get("operation", "download"))
+        if operation == "pdf":
+            await self._run_pdf_import(job, options)
+            return
+        if operation == "pdf-retranslate":
+            await self._run_pdf_retranslate(job, options)
+            return
+        await self._run_web(job, options, operation)
+
+    async def _run_web(self, job: Job, options: dict[str, Any], operation: str) -> None:
         token = JOB_ID.set(job.id)
         started = time.monotonic()
-        operation = str(options.get("operation", "download"))
         logger.info("job %s (%s) iniciado: %s", job.id, operation, job.url)
         job.state = JOB_RUNNING
         job.status("init", "Preparando descarga")
@@ -221,6 +258,112 @@ class JobManager:
             self._record(job, operation, "error", started, error=str(exc))
         finally:
             await fetcher.aclose()
+            if translator is not None:
+                await translator.aclose()
+            await notifier.aclose()
+            JOB_ID.reset(token)
+
+    async def _run_pdf_import(self, job: Job, options: dict[str, Any]) -> None:
+        token = JOB_ID.set(job.id)
+        started = time.monotonic()
+        operation = "pdf"
+        logger.info("job %s (pdf) iniciado: %s", job.id, job.url)
+        job.state = JOB_RUNNING
+        job.status("init", "Preparando PDF")
+        translator = (
+            build_default_translator() if options.get("translate") else None
+        )
+        notifier = build_default_notifier()
+        try:
+            manifest = await run_pdf_pipeline(
+                pdf_path=Path(options["pdf_path"]),
+                output_dir=job.output_dir,
+                source_language=str(options.get("source_language") or "es"),
+                translate=bool(options.get("translate")),
+                target_language=options.get("target_language"),
+                volume_size=options.get("volume_size"),
+                translator=translator,
+                on_status=lambda msg: job.status("status", msg),
+                on_epub_progress=lambda d, t: job.progress("epub", d, t),
+                on_translate_progress=lambda d, t: job.progress("translate", d, t),
+            )
+            job.slug = manifest.slug
+            job.result = {
+                "title": manifest.title,
+                "slug": manifest.slug,
+                "chapters_downloaded": manifest.chapters_downloaded,
+                "chapters_translated": manifest.chapters_translated,
+                "chapters_empty": manifest.chapters_empty,
+                "chapters_empty_nums": manifest.chapters_empty_nums,
+                "epub_original": manifest.epub_original,
+                "epub_translated": manifest.epub_translated,
+            }
+            job.state = JOB_DONE
+            job.status("done", f"Listo: {manifest.title}")
+            logger.info("job %s (pdf) completado: %s", job.id, manifest.slug)
+            self._record(job, operation, "done", started, manifest=manifest)
+        except asyncio.CancelledError:
+            job.state = JOB_CANCELLED
+            job.status("cancelled", "Job cancelado")
+            logger.warning("job %s cancelado", job.id)
+            self._record(job, operation, "cancelled", started, error="cancelado")
+            raise
+        except Exception as exc:  # noqa: BLE001 - capturamos el fallo del job
+            job.state = JOB_ERROR
+            job.error = str(exc)
+            job.status("error", f"Error: {exc}")
+            logger.exception("job %s (pdf) fallo", job.id)
+            self._record(job, operation, "error", started, error=str(exc))
+        finally:
+            if translator is not None:
+                await translator.aclose()
+            await notifier.aclose()
+            shutil.rmtree(Path(options["pdf_path"]).parent, ignore_errors=True)
+            JOB_ID.reset(token)
+
+    async def _run_pdf_retranslate(self, job: Job, options: dict[str, Any]) -> None:
+        token = JOB_ID.set(job.id)
+        started = time.monotonic()
+        operation = "pdf-retranslate"
+        logger.info("job %s (pdf-retranslate) iniciado: %s", job.id, job.url)
+        job.state = JOB_RUNNING
+        job.status("init", "Preparando re-traducción PDF")
+        translator = build_default_translator()
+        notifier = build_default_notifier()
+        try:
+            slug_dir = job.output_dir / str(options["slug"])
+            manifest = await retranslate_pdf(
+                slug_dir=slug_dir,
+                target_language=options.get("target_language"),
+                translator=translator,
+                on_status=lambda msg: job.status("status", msg),
+                on_translate_progress=lambda d, t: job.progress("translate", d, t),
+                on_epub_progress=lambda d, t: job.progress("epub", d, t),
+            )
+            job.slug = manifest.slug
+            job.result = {
+                "title": manifest.title,
+                "slug": manifest.slug,
+                "chapters_translated": manifest.chapters_translated,
+                "epub_original": manifest.epub_original,
+                "epub_translated": manifest.epub_translated,
+            }
+            job.state = JOB_DONE
+            job.status("done", f"Listo: {manifest.title}")
+            self._record(job, operation, "done", started, manifest=manifest)
+        except asyncio.CancelledError:
+            job.state = JOB_CANCELLED
+            job.status("cancelled", "Job cancelado")
+            logger.warning("job %s cancelado", job.id)
+            self._record(job, operation, "cancelled", started, error="cancelado")
+            raise
+        except Exception as exc:  # noqa: BLE001 - capturamos el fallo del job
+            job.state = JOB_ERROR
+            job.error = str(exc)
+            job.status("error", f"Error: {exc}")
+            logger.exception("job %s (pdf-retranslate) fallo", job.id)
+            self._record(job, operation, "error", started, error=str(exc))
+        finally:
             if translator is not None:
                 await translator.aclose()
             await notifier.aclose()

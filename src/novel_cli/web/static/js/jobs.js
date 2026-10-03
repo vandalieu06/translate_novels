@@ -63,6 +63,41 @@ async function submitJob(event) {
   }
 }
 
+async function submitPdfJob(event) {
+  event.preventDefault();
+  const fileInput = $("#pdf-file");
+  const file = fileInput.files[0];
+  if (!file) return showToast("Selecciona un PDF", "error");
+  if (await hasActiveJob()) {
+    showToast("Ya hay un job en curso", "info");
+    return;
+  }
+  const body = new FormData();
+  body.append("file", file);
+  body.append("source_language", $("#pdf-source").value);
+  body.append("volume_size", parseInt($("#pdf-volume").value, 10) || 50);
+  const translate = $("#pdf-translate").checked;
+  if (translate) {
+    body.append("translate", "true");
+    body.append("target_language", $("#pdf-language").value);
+  }
+  const btn = $("#pdf-submit");
+  setButtonLoading(btn, true);
+  try {
+    const { job_id } = await api("/api/upload", { method: "POST", body });
+    state.currentJobId = job_id;
+    showProgressPanel(file.name);
+    resetProgress();
+    connectSocket(job_id);
+    startPolling();
+    showToast("PDF subido, convirtiendo", "success");
+  } catch (e) {
+    showToast(e.message, "error");
+  } finally {
+    setButtonLoading(btn, false);
+  }
+}
+
 function showProgressPanel(label) {
   const url = $("#job-progress-url");
   if (url) url.textContent = label;

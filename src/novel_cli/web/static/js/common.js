@@ -15,7 +15,11 @@ function authHeader() {
 
 async function api(path, options = {}) {
   const headers = { ...authHeader(), ...(options.headers || {}) };
-  if (options.body && typeof options.body !== "string") {
+  if (
+    options.body &&
+    typeof options.body !== "string" &&
+    !(options.body instanceof FormData)
+  ) {
     headers["Content-Type"] = "application/json";
     options.body = JSON.stringify(options.body);
   }
@@ -68,7 +72,13 @@ function renderBackend() {
   const pill = $("#backend-pill");
   if (!pill) return;
   const backend = state.config.translate_backend;
-  pill.textContent = backend === "libre" ? "Traducción: LibreTranslate" : "Traducción: Google";
+  if (backend === "libre") {
+    pill.textContent = "Traducción: LibreTranslate";
+  } else if (backend === "ollama") {
+    pill.textContent = `Traducción: Ollama (${state.config.ollama_model || "LLM"})`;
+  } else {
+    pill.textContent = "Traducción: Google";
+  }
   pill.hidden = false;
 }
 
@@ -103,6 +113,7 @@ function coverCard(n) {
     <a class="cover-card" href="/novela/${encodeURIComponent(n.slug)}">
       <div class="cover-frame">
         ${coverMarkup(n)}
+        ${n.source_pdf ? `<span class="badge badge-info cover-badge cover-badge-pdf">PDF</span>` : ""}
         ${emptyWarning}
         ${n.translated ? `<span class="badge badge-success cover-badge cover-badge-translated">${(n.translated_language || "es").toUpperCase()}</span>` : ""}
         <span class="cover-pct">${pct}%</span>

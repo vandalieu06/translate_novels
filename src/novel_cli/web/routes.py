@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, File, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
@@ -93,6 +93,53 @@ def build_router(manager: JobManager) -> APIRouter:
         )
         return {"job_id": job.id}
 
+    @router.post("/upload")
+    async def upload_pdf(
+        file: UploadFile = File(...),
+        source_language: str = Form("es"),
+        translate: bool = Form(False),
+        target_language: str | None = Form(None),
+        volume_size: int | None = Form(None),
+    ) -> dict[str, str]:
+        """Sube un PDF y lo convierte a EPUB (con traduccion opcional)."""
+        if not file.filename or not file.filename.lower().endswith(".pdf"):
+            raise HTTPException(
+                status_code=400, detail="el archivo debe tener extension .pdf"
+            )
+        if source_language not in config.SOURCE_LANGUAGES:
+            raise HTTPException(status_code=400, detail="source_language no soportado")
+        if (
+            translate
+            and target_language is not None
+            and not config.is_valid_translate_target(target_language)
+        ):
+            raise HTTPException(
+                status_code=400, detail="target_language no soportado"
+            )
+        if volume_size is not None and volume_size not in (50, 100, 150, 200):
+            raise HTTPException(
+                status_code=400, detail="volume_size solo acepta 50, 100, 150 o 200"
+            )
+        data = await file.read()
+        if len(data) > config.upload_max_bytes():
+            raise HTTPException(
+                status_code=400,
+                detail=f"el PDF supera el maximo de {config.UPLOAD_MAX_MB} MB",
+            )
+        job = manager.create_pdf(
+            filename=file.filename,
+            data=data,
+            output_dir=None,
+            options={
+                "operation": "pdf",
+                "source_language": source_language,
+                "translate": translate,
+                "target_language": target_language,
+                "volume_size": volume_size,
+            },
+        )
+        return {"job_id": job.id}
+
     @router.get("/jobs/{job_id}")
     async def get_job(job_id: str) -> dict[str, object]:
         job = manager.get(job_id)
@@ -170,15 +217,26 @@ def build_router(manager: JobManager) -> APIRouter:
         manifest = Manifest.load(slug_dir)
         if manifest is None:
             raise HTTPException(status_code=404, detail="novela no encontrada")
-        if not manifest.source_url or not _valid_url(manifest.source_url):
-            raise HTTPException(
-                status_code=400, detail="la novela no tiene una source_url valida"
-            )
         requested = req.target_language if req else None
         current = manifest.translated_language or config.translate_target_default()
         target = requested or current
         if not config.is_valid_translate_target(target):
             raise HTTPException(status_code=400, detail="target_language no soportado")
+        if manifest.source_pdf:
+            job = manager.create(
+                url=manifest.title,
+                output_dir=output_dir,
+                options={
+                    "operation": "pdf-retranslate",
+                    "slug": manifest.slug,
+                    "target_language": target,
+                },
+            )
+            return {"job_id": job.id}
+        if not manifest.source_url or not _valid_url(manifest.source_url):
+            raise HTTPException(
+                status_code=400, detail="la novela no tiene una source_url valida"
+            )
         force = requested is not None and target != current
         job = manager.create(
             url=manifest.source_url,
@@ -282,6 +340,7 @@ def _novel_payload(slug_dir: Path, manifest: Manifest) -> dict[str, object]:
         "title": manifest.title,
         "author": manifest.author,
         "source_url": manifest.source_url,
+        "source_pdf": manifest.source_pdf,
         "chapters_total": manifest.chapters_total,
         "chapters_downloaded": manifest.chapters_downloaded,
         "chapters_translated": manifest.chapters_translated,

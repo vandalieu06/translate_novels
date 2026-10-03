@@ -32,6 +32,7 @@ function renderHero(n) {
   $("#novel-author").textContent = n.author || "";
 
   const meta = [];
+  if (n.source_pdf) meta.push(`<span class="badge badge-info">PDF</span>`);
   meta.push(`<span class="badge ${n.translated ? "badge-success" : "badge-neutral"}">${n.translated ? `${languageLabel(n.translated_language || "es")} + original` : "original"}</span>`);
   const volCount = (n.epub_original || []).length;
   if (volCount) meta.push(`<span class="chip">${volCount} vol.</span>`);
@@ -59,10 +60,12 @@ function renderActions(n) {
   const title = escapeHtml(n.title);
   const volumeSize = n.volume_size == null ? "ALL" : n.volume_size;
   const actions = [];
-  actions.push(`
-    <button class="btn btn-secondary btn-sync" data-slug="${slug}" data-title="${title}" data-label="Sync" data-loading="Sincronizando...">
-      <span class="sync-icon">&#8635;</span><span class="btn-label">Sync</span>
-    </button>`);
+  if (!n.source_pdf) {
+    actions.push(`
+      <button class="btn btn-secondary btn-sync" data-slug="${slug}" data-title="${title}" data-label="Sync" data-loading="Sincronizando...">
+        <span class="sync-icon">&#8635;</span><span class="btn-label">Sync</span>
+      </button>`);
+  }
   if (!n.translated) {
     actions.push(`
       <button class="btn btn-secondary btn-translate" data-slug="${slug}" data-title="${title}" data-label="Traducir" data-loading="Abriendo...">

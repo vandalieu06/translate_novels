@@ -8,6 +8,7 @@ builder de novel_cli (texto plano, tomos).
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -151,7 +152,8 @@ async def run_pdf_pipeline(
     workdir = pdf_path.parent / "work"
     if on_status:
         on_status("Convirtiendo PDF a EPUB y DOCX")
-    converted = convert_pdf(
+    converted = await asyncio.to_thread(
+        convert_pdf,
         pdf_path,
         workdir,
         language=source_language,
@@ -247,6 +249,77 @@ async def run_pdf_pipeline(
         manifest.translated = True
         manifest.translated_language = target
 
+    cleanup_orphan_epubs(
+        slug_dir,
+        keep=manifest.epub_original + manifest.epub_translated,
+    )
+    manifest.save(slug_dir)
+    return manifest
+
+
+async def retranslate_pdf(
+    *,
+    slug_dir: Path,
+    target_language: str | None,
+    translator: Translator,
+    on_status: StatusCallback | None = None,
+    on_translate_progress: ProgressCallback | None = None,
+    on_epub_progress: ProgressCallback | None = None,
+) -> Manifest:
+    """Re-traduce los capitulos pendientes de una novela importada de PDF.
+
+    No reconvierte el PDF: trabaja desde el `raw/` ya en disco y regenera los
+    EPUBs traducidos (el original rico de pdf-to-epub se conserva intacto).
+    """
+    manifest = Manifest.load(slug_dir)
+    if manifest is None:
+        raise PdfImportError(f"no hay manifest en {slug_dir}")
+    raw_chapters = load_all_from_disk(slug_dir / "raw")
+    if not raw_chapters:
+        raise PdfImportError("no hay capitulos descargados en disco")
+
+    source = manifest.language_code or "auto"
+    target = (
+        target_language
+        or manifest.translated_language
+        or config.translate_target_default()
+    )
+    if on_status:
+        on_status(f"Traduciendo capitulos pendientes a {target}")
+    await translate_chapters(
+        translator=translator,
+        chapters=raw_chapters,
+        slug_dir=slug_dir,
+        manifest=manifest,
+        target=target,
+        source=source,
+        on_progress=on_translate_progress,
+    )
+    translated = build_epub_chapters(
+        raw_chapters, slug_dir / "translated", translated_placeholder(target)
+    )
+    metadata = NovelMetadata(
+        title=manifest.title,
+        author=manifest.author,
+        cover_url=manifest.cover_path,
+        source_url=manifest.source_url,
+    )
+    es_names = generate_epubs(
+        slug_dir=slug_dir,
+        manifest=manifest,
+        metadata=metadata,
+        chapters=translated,
+        volume_size=manifest.volume_size,
+        language=target,
+        translated=True,
+        resume=True,
+        force=False,
+        rebuild=True,
+        on_progress=on_epub_progress,
+    )
+    manifest.epub_translated = es_names
+    manifest.translated = True
+    manifest.translated_language = target
     cleanup_orphan_epubs(
         slug_dir,
         keep=manifest.epub_original + manifest.epub_translated,

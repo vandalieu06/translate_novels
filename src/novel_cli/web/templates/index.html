@@ -101,6 +101,44 @@
         </div>
       </form>
 
+      <div class="section-separator" role="separator">o sube un PDF</div>
+
+      <form class="card job-form" id="pdf-form">
+        <div class="field url-field">
+          <label for="pdf-file">Archivo PDF</label>
+          <input type="file" id="pdf-file" accept=".pdf,application/pdf" required />
+          <p class="field-hint">Webnovel o light novel con ilustraciones. El EPUB original conserva el formato del PDF.</p>
+        </div>
+        <div class="row-fields">
+          <div class="field">
+            <label for="pdf-source">Idioma del PDF</label>
+            <select id="pdf-source"></select>
+          </div>
+          <div class="field">
+            <label for="pdf-volume">Capítulos por tomo</label>
+            <select id="pdf-volume">
+              <option value="50" selected>50</option>
+              <option value="100">100</option>
+              <option value="150">150</option>
+              <option value="200">200</option>
+            </select>
+          </div>
+        </div>
+        <div class="checkbox-group">
+          <label><input type="checkbox" id="pdf-translate" /> Traducir</label>
+        </div>
+        <div class="field translate-lang-field" id="pdf-field-language" hidden>
+          <label for="pdf-language">Idioma de traducción</label>
+          <select id="pdf-language"></select>
+        </div>
+        <div class="form-actions">
+          <button type="submit" class="btn btn-primary btn-lg" id="pdf-submit" data-label="Subir y convertir" data-loading="Subiendo...">
+            <span class="spinner"></span>
+            <span class="btn-label">Subir y convertir</span>
+          </button>
+        </div>
+      </form>
+
       <div class="job-progress card" id="job-progress">
         <div class="job-head">
           <span class="job-url" id="job-progress-url"></span>

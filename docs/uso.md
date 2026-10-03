@@ -377,14 +377,15 @@ Desde la tablet/móvil abre `http://<ip-del-pc>:8000/` en el navegador (ambos en
 
 La web se organiza en varias páginas (navegación común: **Descargar · Biblioteca · Ayuda**):
 
-- **`/`** — Descarga: formulario con URL, tomo, concurrencia y opciones, progreso en vivo y una franja de **novelas recientes** (portadas) que enlaza a la ficha de cada una.
-- **`/biblioteca`** — Grid de solo portadas: toca una portada para abrir su ficha.
-- **`/novela/{slug}`** — Ficha individual: portada grande, datos, progreso, acciones (**Traducir** en novelas no traducidas, Sync, Re-traducir, Tomos, Regenerar EPUBs) con su progreso en vivo y la lista de **EPUBs** generados (original y traducción).
+- **`/`** — Descarga: formulario con URL, tomo, concurrencia y opciones, **subida de PDFs** (archivo + idioma del PDF + traducción opcional), progreso en vivo y una franja de **novelas recientes** (portadas) que enlaza a la ficha de cada una.
+- **`/biblioteca`** — Grid de solo portadas: toca una portada para abrir su ficha (las importadas de PDF llevan badge `PDF`).
+- **`/novela/{slug}`** — Ficha individual: portada grande, datos, progreso, acciones (**Traducir** en novelas no traducidas, Sync, Re-traducir, Tomos, Regenerar EPUBs) con su progreso en vivo y la lista de **EPUBs** generados (original y traducción). En novelas PDF no hay botón **Sync**.
 - **`/ayuda`** — Guía rápida de qué hace cada acción, por si olvidas el detalle.
 
 ### Qué ofrece
 
 - **Lanzar descarga**: URL, tomo (`50`/`100`), concurrencia, idioma de traducción y opciones (`--translate`, `--all`, `--translate-pending`, `--force`, `--playwright`), igual que el CLI.
+- **Subir un PDF** (tarjeta "Subir un PDF"): archivo + idioma del PDF (default `es`) + traducción opcional (idioma destino y tomos). El EPUB original conserva el formato del PDF; si el idioma difiere del destino, se genera también el EPUB traducido. El progreso se muestra en el mismo panel (status + barras). Límite: `NOVEL_UPLOAD_MAX_MB` (default 100).
 - **Progreso en vivo** por WebSocket: fases de descarga, traducción y EPUB con barras y contadores.
 - **Traducir** (botón **🌐 Traducir** en la ficha de novelas no traducidas): abre un **modal para elegir el idioma** (es, en, fr, de, it, pt, ru, ja, ko, zh) y lanza un job de **solo traducción** de los capítulos pendientes; si el idioma difiere del guardado, **re-traduce todo** sin volver a descargar.
 - **Sincronizar novela** (botón **↻ Sync** en la ficha de la novela): obtiene nuevos capítulos de una novela ya descargada **sin re-pegar la URL**. El sync reusa la `source_url` guardada y el mismo mecanismo de la CLI (misma URL + `--resume` → descarga el siguiente tomo pendiente), y **hereda la traducción, el idioma y el tamaño de tomo** de la novela: si la novela se descargó traducida, los nuevos capítulos también se traducen y se regenera el EPUB traducido.
