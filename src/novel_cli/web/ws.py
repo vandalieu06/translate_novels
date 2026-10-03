@@ -24,8 +24,13 @@ def build_ws(manager: JobManager) -> APIRouter:
         for event in job.events:
             await websocket.send_json(event)
 
+        loop = asyncio.get_running_loop()
+
         def forward(event: dict[str, object]) -> None:
-            asyncio.create_task(websocket.send_json(event))
+            # Los eventos pueden llegar desde un hilo de trabajo (p. ej. la
+            # conversion de un PDF en asyncio.to_thread), donde no hay event
+            # loop: se programa el envio sobre el loop principal.
+            asyncio.run_coroutine_threadsafe(websocket.send_json(event), loop)
 
         unsubscribe = job.subscribe(forward)
         try:
