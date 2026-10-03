@@ -2,7 +2,7 @@
 code: "03"
 title: "Move novels library to ../library-novels and separate logs"
 project: "novel_cli"
-status: in-progress
+status: completed
 version: "0.3.0"
 date: 2026-10-03
 tags: [spec, sdd]

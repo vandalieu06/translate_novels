@@ -2,7 +2,7 @@
 code: "02"
 title: "Web: PDF upload and jobs"
 project: "novel_cli"
-status: in-progress
+status: completed
 version: "0.3.0"
 date: 2026-10-03
 tags: [spec, sdd]
