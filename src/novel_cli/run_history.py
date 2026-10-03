@@ -12,6 +12,7 @@ from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
 
+from novel_cli.core import config
 from novel_cli.core.models.state import Manifest
 
 
@@ -37,8 +38,12 @@ class RunRecord:
 
 
 def append_run(output_dir: str | Path, record: RunRecord) -> Path:
-    """Anexa ``record`` a ``<output_dir>/logs/runs.jsonl`` y devuelve la ruta."""
-    log_dir = Path(output_dir) / "logs"
+    """Anexa ``record`` a ``runs.jsonl`` y devuelve la ruta.
+
+    El destino es ``NOVEL_LOG_DIR`` si esta definido; si no,
+    ``<output_dir>/logs/runs.jsonl`` (comportamiento historico).
+    """
+    log_dir = config.log_dir() or (Path(output_dir) / "logs")
     log_dir.mkdir(parents=True, exist_ok=True)
     path = log_dir / "runs.jsonl"
     with path.open("a", encoding="utf-8") as handle:

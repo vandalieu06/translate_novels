@@ -243,3 +243,15 @@ def default_output() -> Path:
     if env:
         return Path(env).expanduser()
     return Path("output")
+
+
+def log_dir() -> Path | None:
+    """Directorio de logs (env ``NOVEL_LOG_DIR``) o None para usar ``<output>/logs``.
+
+    Separar el directorio de logs del de novelas permite que ``output/`` conserve
+    los logs aunque las novelas vivan en ``NOVEL_OUTPUT_DIR``.
+    """
+    env = os.environ.get("NOVEL_LOG_DIR")
+    if env:
+        return Path(env).expanduser()
+    return None

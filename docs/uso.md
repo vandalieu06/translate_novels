@@ -77,13 +77,16 @@ novel-cli pdf "mi-novela.pdf" --source en -t --target fr
 
 ## Estructura de salida
 
-Cada novela vive en `output/<slug>/` (el slug deriva del título):
+Las novelas viven en `output/<slug>/` por defecto, o en `NOVEL_OUTPUT_DIR/<slug>/` si defines
+esa variable (p. ej. `library-novels/`). Los logs e historial van a `output/logs/`
+(configurables con `NOVEL_LOG_DIR`).
 
 ```
-output/
+<NOVEL_OUTPUT_DIR o output>/
 └── <slug>/
     ├── .manifest.json        # estado/índice (fuente de verdad para reanudar)
     ├── cover.jpg             # portada local (si el sitio la dio)
+    ├── source.pdf            # PDF original (si se importó con `novel-cli pdf`)
     ├── raw/                  # capítulos en idioma original (0001.md, 0002.md, ...)
     ├── translated/           # capítulos traducidos a es (si --translate)
     ├── Novela 1-50.epub

@@ -57,6 +57,7 @@ def _flush() -> None:
 def test_configure_logging_writes_file(tmp_path, monkeypatch):
     monkeypatch.delenv("NOVEL_LOG_FILE", raising=False)
     monkeypatch.delenv("NOVEL_LOG_LEVEL", raising=False)
+    monkeypatch.delenv("NOVEL_LOG_DIR", raising=False)
     path = configure_logging(output_dir=tmp_path, force=True)
     logging.getLogger("novel_cli.test").info("hola-log")
     _flush()
@@ -105,7 +106,8 @@ def test_job_id_filter_injects_context():
 # --- Historial -------------------------------------------------------------
 
 
-def test_append_run_writes_jsonl(tmp_path):
+def test_append_run_writes_jsonl(tmp_path, monkeypatch):
+    monkeypatch.delenv("NOVEL_LOG_DIR", raising=False)
     append_run(tmp_path, RunRecord(operation="sync", status="done", duration_s=1.5))
     append_run(tmp_path, RunRecord(operation="download", status="error", error="boom"))
     path = tmp_path / "logs" / "runs.jsonl"

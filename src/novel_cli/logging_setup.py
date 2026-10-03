@@ -51,6 +51,9 @@ def _resolve_path(output_dir: Path) -> Path:
     env = os.environ.get("NOVEL_LOG_FILE")
     if env:
         return Path(env).expanduser()
+    log_dir = config.log_dir()
+    if log_dir is not None:
+        return log_dir / "novel-cli.log"
     return Path(output_dir) / "logs" / "novel-cli.log"
 
 

@@ -1,6 +1,6 @@
 # novel-cli
 
-CLI para descargar **web novels** y convertirlas en **EPUB**, con traducción opcional a español vía el endpoint gratuito de Google Translate. Descarga por tomos (un volumen por ejecución) para tener el primer EPUB al instante sin bajar toda la novela de golpe.
+CLI para descargar **web novels** y convertirlas en **EPUB**, con traducción opcional a español vía el endpoint gratuito de Google Translate, LibreTranslate local o un **LLM local con Ollama** (p. ej. TranslateGemma). Descarga por tomos (un volumen por ejecución) para tener el primer EPUB al instante sin bajar toda la novela de golpe.
 
 ## Stack
 
@@ -9,7 +9,8 @@ CLI para descargar **web novels** y convertirlas en **EPUB**, con traducción op
 - **ebooklib + lxml** para generar EPUB
 - **typer + rich** para el CLI y el progreso
 - **pydantic** para el manifest de estado (JSON por novela)
-- Sin SQLite, sin Ollama, sin `googletrans`
+- Traducción opcional: Google (gratuito, default), LibreTranslate local o **Ollama** (LLM local; sin dependencias Python extra)
+- Sin SQLite ni `googletrans`
 
 ## Instalación
 
@@ -47,7 +48,17 @@ novel-cli https://example.com/novel --all
 | `-c, --concurrency <n>` | Workers del pool de descarga (default: 4). |
 | `-V, --verbose` | Logs detallados. |
 
-Salida por novela: `output/<slug>/` con `.manifest.json`, `raw/`, `translated/` (si `-t`) y los EPUB (`Novela 1-50.epub`, `Novela 1-50 (ES).epub`, ...).
+Salida por novela: `output/<slug>/` (o `NOVEL_OUTPUT_DIR/<slug>/`) con `.manifest.json`,
+`raw/`, `translated/` (si `-t`) y los EPUB (`Novela 1-50.epub`, `Novela 1-50 (ES).epub`, ...).
+
+Importar un PDF de novela (EPUB original conservando el formato + traducción opcional):
+
+```bash
+novel-cli pdf "mi-novela.pdf" --source en -t      # original EN + traducido a es
+```
+
+Los logs e historial van a `output/logs/` (configurables con `NOVEL_LOG_DIR`/`NOVEL_LOG_FILE`);
+las novelas pueden vivir fuera del proyecto con `NOVEL_OUTPUT_DIR`.
 
 ## Documentación
 
