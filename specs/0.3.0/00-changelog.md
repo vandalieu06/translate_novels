@@ -12,4 +12,4 @@
 | 2026-10-17 | 08 | Ayuda agrupada, ayuda inline, accesibilidad y docs actualizadas | `694111a` |
 | 2026-10-17 | 09 | Corregir el resumen de Telegram cuando la duración es <1s (escapado del HTML) | `060c9b3` |
 | 2026-10-17 | 10 | Paginar el TOC de NovelFire/NovelPhoenix por rangos (?page=N) | `41c2de3` |
-| 2026-10-17 | 11 | El Sync de la web hace siempre el peek del TOC (detecta novedades con caché fresca) | — |
+| 2026-10-17 | 11 | El Sync de la web hace siempre el peek del TOC (detecta novedades con caché fresca) | `2aec2f6` |
