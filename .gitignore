@@ -17,3 +17,7 @@ db/
 
 # Tooling local (opencode)
 .opencode/
+
+# Tooling local (skills de agentes)
+.agents/
+skills-lock.json
