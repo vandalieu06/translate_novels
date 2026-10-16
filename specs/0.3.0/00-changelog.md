@@ -10,3 +10,4 @@
 | 2026-10-17 | 06 | Shell común (Ajustes/tema), job bar global y home directa (web/PDF) | `694111a` |
 | 2026-10-17 | 07 | Biblioteca con buscar/filtrar/ordenar y ficha reestructurada | `694111a` |
 | 2026-10-17 | 08 | Ayuda agrupada, ayuda inline, accesibilidad y docs actualizadas | `694111a` |
+| 2026-10-17 | 09 | Corregir el resumen de Telegram cuando la duración es <1s (escapado del HTML) | — |

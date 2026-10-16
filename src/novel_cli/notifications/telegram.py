@@ -77,7 +77,7 @@ def _render_summary(
         f"✅ <b>{_esc(_clip(title, _MAX_TITLE))}</b>" if title else "✅ Proceso completado"
     )
     label = _esc(_operation_label(operation))
-    subtitle = f"<code>{label} · {_format_duration(duration)}</code>"
+    subtitle = f"<code>{label} · {_esc(_format_duration(duration))}</code>"
 
     lines: list[str] = []
     downloaded = data.get("download_done", {}).get("chapters_downloaded")
@@ -127,7 +127,7 @@ def _render_error(event: NotificationEvent, title: str | None, duration: float) 
     parts = [heading]
     if detail:
         parts.append(f"<code>{_esc(detail)}</code>")
-    parts.append(f"<i>tras {_format_duration(duration)}</i>")
+    parts.append(f"<i>tras {_esc(_format_duration(duration))}</i>")
     return "\n".join(parts)
 
 

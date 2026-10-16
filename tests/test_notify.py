@@ -179,6 +179,13 @@ def test_render_summary_escapes_dynamic_content():
     assert "A &lt;b&gt; B &amp; C" in text
 
 
+def test_render_summary_escapes_short_duration():
+    """Una duracion <1s no debe introducir un '<' crudo (rompe el HTML Telegram)."""
+    text = _render_summary([_ev("job_done", operation="sync")], "Novela", 0)
+    assert "&lt;1s" in text
+    assert "<1s" not in text
+
+
 # --- Formato: error --------------------------------------------------------
 
 
@@ -201,6 +208,13 @@ def test_render_error_clips_long_detail():
     event = _ev("job_error", ok=False, phase="descarga", detail="a" * 2000)
     text = _render_error(event, "Novela", 1)
     assert "…" in text
+
+
+def test_render_error_escapes_short_duration():
+    event = _ev("job_error", ok=False, phase="descarga", detail="boom")
+    text = _render_error(event, "Novela", 0.4)
+    assert "&lt;1s" in text
+    assert "<1s" not in text
 
 
 # --- Helpers de formato ----------------------------------------------------
