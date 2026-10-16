@@ -15,6 +15,7 @@ SEL_CHAPTER_LINKS = "#chpagedlist .chapter-list li a"
 SEL_CHAPTER_TITLE = ".chapter-title"
 SEL_PARAGRAPHS = "#chapter-container #content p"
 SEL_NEXT = "#chpagedlist .page-item > .page-link[rel='next']"
+SEL_NEXT_RANGE = ".chapter-range-pager a"
 
 
 class NovelfireAdapter:
@@ -65,11 +66,35 @@ class NovelfireAdapter:
         return paragraphs
 
     def next_page(self, html: str, base_url: str) -> str | None:
-        """URL de la siguiente pagina de listado, o None si es la ultima."""
+        """URL de la siguiente pagina de listado, o None si es la ultima.
+
+        Reconoce dos paginadores: el clasico de novelfire.net
+        (``.page-link[rel='next']``) y el de novelphoenix.com
+        (``.chapter-range-pager`` con enlaces ``‹ ›`` etiquetados por
+        ``aria-label`` y deshabilitados con ``aria-disabled``).
+        """
         root = lh.fromstring(html)
+        link = self._rel_next(root, base_url)
+        if link is not None:
+            return link
+        return self._range_next(root, base_url)
+
+    def _rel_next(self, root, base_url: str) -> str | None:
         for link in root.cssselect(SEL_NEXT):
             parent = link.getparent()
             if parent is not None and "disabled" in (parent.get("class") or ""):
+                return None
+            href = link.get("href")
+            if href:
+                return urljoin(base_url, href)
+        return None
+
+    def _range_next(self, root, base_url: str) -> str | None:
+        for link in root.cssselect(SEL_NEXT_RANGE):
+            label = (link.get("aria-label") or "").strip().lower()
+            if label != "next chapter range":
+                continue
+            if (link.get("aria-disabled") or "").lower() == "true":
                 return None
             href = link.get("href")
             if href:
