@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import json
+import logging
 import time
 
 import httpx
@@ -17,6 +19,7 @@ from novel_cli.core.services.translate import (
     GTX_ENDPOINT,
     GoogleFreeTranslator,
     LibreTranslateTranslator,
+    OllamaTranslator,
     TranslateError,
     build_default_translator,
     translate_chapter,
@@ -26,6 +29,7 @@ from novel_cli.core.services.translate import (
 from novel_cli.core.utils.names import chapter_filename
 
 LIBRE_ENDPOINT = "http://localhost:5000/translate"
+OLLAMA_CHAT = "http://localhost:11434/api/chat"
 
 
 def echo_handler(request: httpx.Request) -> httpx.Response:
@@ -46,6 +50,18 @@ def make_libre(**kw) -> LibreTranslateTranslator:
     kw.setdefault("backoff_base", 0.0)
     kw.setdefault("base_url", "http://localhost:5000")
     return LibreTranslateTranslator(**kw)
+
+
+def make_ollama(**kw) -> OllamaTranslator:
+    kw.setdefault("pacer", Pacer(0))
+    kw.setdefault("max_retries", 3)
+    kw.setdefault("backoff_base", 0.0)
+    kw.setdefault("base_url", "http://localhost:11434")
+    return OllamaTranslator(**kw)
+
+
+def ollama_response(content: str) -> httpx.Response:
+    return httpx.Response(200, json={"message": {"role": "assistant", "content": content}})
 
 
 def make_manifest(slug_dir) -> Manifest:
@@ -641,3 +657,212 @@ async def test_translate_chapters_concurrency_1_sequential(tmp_path):
         finally:
             await translator.aclose()
     assert manifest.chapters_translated == 3
+
+
+@pytest.mark.asyncio
+async def test_ollama_sends_official_prompt_and_parses():
+    captured: dict = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured["json"] = json.loads(request.content)
+        return ollama_response("Hola mundo")
+
+    with respx.mock() as router:
+        router.post(OLLAMA_CHAT).mock(side_effect=handler)
+        translator = make_ollama()
+        try:
+            assert await translator.translate_text("Hello world", target="es") == "Hola mundo"
+        finally:
+            await translator.aclose()
+
+    body = captured["json"]
+    assert body["model"] == config.OLLAMA_MODEL
+    assert body["stream"] is False
+    assert body["keep_alive"] == config.OLLAMA_KEEP_ALIVE
+    assert body["options"] == {"temperature": 0}
+    prompt = body["messages"][0]["content"]
+    assert body["messages"][0]["role"] == "user"
+    assert prompt.startswith("You are a professional English (en) to Spanish (es) translator.")
+    assert "Produce only the Spanish translation, without any additional" in prompt
+    # dos lineas en blanco antes del texto a traducir
+    assert prompt.endswith("into Spanish:\n\n\nHello world")
+
+
+@pytest.mark.asyncio
+async def test_ollama_empty_text_does_not_call():
+    with respx.mock(assert_all_called=False) as router:
+        route = router.post(OLLAMA_CHAT).mock(return_value=ollama_response("x"))
+        translator = make_ollama()
+        try:
+            assert await translator.translate_text("   ", target="es") == "   "
+        finally:
+            await translator.aclose()
+        assert route.call_count == 0
+
+
+@pytest.mark.asyncio
+async def test_ollama_auto_source_uses_configured_lang():
+    captured: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured.append(json.loads(request.content)["messages"][0]["content"])
+        return ollama_response("ok")
+
+    with respx.mock() as router:
+        router.post(OLLAMA_CHAT).mock(side_effect=handler)
+        translator = make_ollama(source_lang="en")
+        try:
+            await translator.translate_text("Hello", source="auto", target="es")
+            await translator.translate_text("Bonjour", source="fr", target="es")
+        finally:
+            await translator.aclose()
+
+    assert "English (en) to Spanish (es)" in captured[0]
+    assert "French (fr) to Spanish (es)" in captured[1]
+
+
+@pytest.mark.asyncio
+async def test_ollama_retries_network_error():
+    with respx.mock() as router:
+        route = router.post(OLLAMA_CHAT)
+        route.side_effect = [
+            httpx.ConnectError("boom"),
+            ollama_response("ok"),
+        ]
+        translator = make_ollama()
+        try:
+            assert await translator.translate_text("Hello", target="es") == "ok"
+            assert route.call_count == 2
+        finally:
+            await translator.aclose()
+
+
+@pytest.mark.asyncio
+async def test_ollama_reintenta_con_preserve_breaks_si_no_cuadra():
+    payloads: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        payloads.append(json.loads(request.content)["messages"][0]["content"])
+        if len(payloads) == 1:
+            # 3 parrafos de entrada pero 1 sola linea de salida
+            return ollama_response("Una sola linea")
+        return ollama_response("Uno\nDos\nTres")
+
+    with respx.mock() as router:
+        router.post(OLLAMA_CHAT).mock(side_effect=handler)
+        translator = make_ollama()
+        try:
+            result = await translator.translate_text("One\nTwo\nThree", target="es")
+        finally:
+            await translator.aclose()
+
+    assert result == "Uno\nDos\nTres"
+    assert len(payloads) == 2
+    assert "Preserve the paragraph breaks" not in payloads[0]
+    assert "Preserve the paragraph breaks" in payloads[1]
+
+
+@pytest.mark.asyncio
+async def test_ollama_fallback_linea_a_linea_evita_vacios(caplog):
+    def handler(request: httpx.Request) -> httpx.Response:
+        content = json.loads(request.content)["messages"][0]["content"]
+        source_text = content.split("\n\n\n", 1)[1]
+        if "\n" in source_text:
+            # chunk multilinea desalineado: una sola linea en la respuesta
+            return ollama_response("Una sola linea")
+        return ollama_response(f"ES:{source_text.strip()}")
+
+    with respx.mock() as router:
+        route = router.post(OLLAMA_CHAT).mock(side_effect=handler)
+        translator = make_ollama()
+        with caplog.at_level(logging.WARNING):
+            try:
+                result = await translator.translate_text("One\nTwo\nThree", target="es")
+            finally:
+                await translator.aclose()
+
+    assert result == "ES:One\nES:Two\nES:Three"
+    # 2 intentos del chunk completo + 3 lineas individuales
+    assert route.call_count == 5
+    assert "fallback linea a linea" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_ollama_http_404_falla_rapido():
+    with respx.mock() as router:
+        route = router.post(OLLAMA_CHAT).mock(
+            return_value=httpx.Response(404, text="model not found")
+        )
+        translator = make_ollama()
+        try:
+            with pytest.raises(TranslateError) as excinfo:
+                await translator.translate_text("Hello", target="es")
+        finally:
+            await translator.aclose()
+    assert excinfo.value.status_code == 404
+    assert route.call_count == 1
+
+
+@pytest.mark.asyncio
+async def test_ollama_translate_chapters_pasa_source_del_manifest(tmp_path):
+    prompts: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        prompts.append(json.loads(request.content)["messages"][0]["content"])
+        return ollama_response("Hola")
+
+    chapters = [Chapter(num=1, title="Ch 1", url="u1", paragraphs=["Hello"])]
+    with respx.mock() as router:
+        router.post(OLLAMA_CHAT).mock(side_effect=handler)
+        translator = make_ollama()
+        manifest = make_manifest(tmp_path)
+        try:
+            await translate_chapters(
+                translator=translator,
+                chapters=chapters,
+                slug_dir=tmp_path,
+                manifest=manifest,
+                target="es",
+                source="fr",
+            )
+        finally:
+            await translator.aclose()
+
+    assert "French (fr) to Spanish (es)" in prompts[0]
+
+
+def test_build_default_translator_ollama(monkeypatch):
+    monkeypatch.setattr(config, "TRANSLATE_BACKEND", "ollama")
+    monkeypatch.setattr(config, "OLLAMA_MODEL", "translategemma:4b")
+    translator = build_default_translator()
+    assert isinstance(translator, OllamaTranslator)
+    assert translator.model == "translategemma:4b"
+
+
+def test_effective_translate_concurrency_ollama_forces_one(monkeypatch):
+    monkeypatch.setattr(config, "TRANSLATE_BACKEND", "ollama")
+    assert config.effective_translate_concurrency(8) == 1
+    assert config.translate_concurrency_default() == 1
+
+
+def test_translate_max_words_per_chunk_by_backend(monkeypatch):
+    monkeypatch.setattr(config, "TRANSLATE_BACKEND", "ollama")
+    monkeypatch.setattr(config, "OLLAMA_MAX_WORDS_PER_CHUNK", 222)
+    assert config.translate_max_words_per_chunk() == 222
+
+    monkeypatch.setattr(config, "TRANSLATE_BACKEND", "google")
+    assert config.translate_max_words_per_chunk() == DEFAULT_MAX_WORDS_PER_CHUNK
+
+
+@pytest.mark.asyncio
+async def test_reassembly_ignora_lineas_en_blanco_del_llm():
+    """Un LLM puede intercalar lineas en blanco; no deben desplazar el mapeo 1:1."""
+
+    class BlankLinesTranslator:
+        async def translate_text(self, text, *, source="auto", target="es"):
+            return "\n\n".join("X" + line for line in text.split("\n"))
+
+    paragraphs = ["One", "Two", "Three"]
+    result = await translate_paragraphs(paragraphs, BlankLinesTranslator())
+    assert result == ["XOne", "XTwo", "XThree"]
+
