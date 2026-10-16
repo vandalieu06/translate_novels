@@ -11,4 +11,4 @@
 | 2026-10-17 | 07 | Biblioteca con buscar/filtrar/ordenar y ficha reestructurada | `694111a` |
 | 2026-10-17 | 08 | Ayuda agrupada, ayuda inline, accesibilidad y docs actualizadas | `694111a` |
 | 2026-10-17 | 09 | Corregir el resumen de Telegram cuando la duración es <1s (escapado del HTML) | `060c9b3` |
-| 2026-10-17 | 10 | Paginar el TOC de NovelFire/NovelPhoenix por rangos (?page=N) | — |
+| 2026-10-17 | 10 | Paginar el TOC de NovelFire/NovelPhoenix por rangos (?page=N) | `41c2de3` |
