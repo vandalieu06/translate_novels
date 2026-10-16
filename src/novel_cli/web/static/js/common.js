@@ -281,18 +281,29 @@ function confirmDialog({ title, message, confirmLabel = "Continuar" }) {
   });
 }
 
+/* Mueve el foco al primer elemento interactivo de un diálogo */
+function focusFirstIn(root) {
+  const items = root.querySelectorAll(FOCUSABLE);
+  if (items.length) items[0].focus();
+}
+
+const FOCUSABLE =
+  'a[href], button:not([disabled]), input:not([disabled]), ' +
+  'select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
+
 /* Focus trap para diálogos abiertos (Tab/Shift+Tab dentro del overlay) */
 document.addEventListener("keydown", (e) => {
   if (e.key !== "Tab") return;
   const overlay = document.querySelector(".modal-overlay:not([hidden])");
   if (!overlay) return;
-  const items = overlay.querySelectorAll(
-    'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
-  );
+  const items = overlay.querySelectorAll(FOCUSABLE);
   if (!items.length) return;
   const first = items[0];
   const last = items[items.length - 1];
-  if (e.shiftKey && document.activeElement === first) {
+  if (!overlay.contains(document.activeElement)) {
+    e.preventDefault();
+    first.focus();
+  } else if (e.shiftKey && document.activeElement === first) {
     e.preventDefault();
     last.focus();
   } else if (!e.shiftKey && document.activeElement === last) {

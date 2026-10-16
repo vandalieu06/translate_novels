@@ -115,13 +115,13 @@ function onJobEvent(event) {
   else if (event.type === "progress") renderProgress(event);
   if (event.type === "done" || event.type === "error" || event.type === "cancelled") {
     if (event.type === "done") showToast("Job completado", "success");
+    else if (event.type === "error") showToast(event.message || "El job falló", "error");
+    else showToast("Job cancelado", "info");
     if (state.socket) state.socket.close();
     state.socket = null;
     state.currentJobId = null;
     stopPolling();
-    setJobIndicator(false);
-    const cancel = $("#cancel-btn");
-    if (cancel) cancel.hidden = true;
+    hideJobBar();
     if (typeof refreshAfterJob === "function") refreshAfterJob();
   }
 }
@@ -151,12 +151,15 @@ function startPolling() {
             line.className = "status-line error";
             line.textContent = job.error || "error";
           }
+          showToast(job.error || "El job falló", "error");
+        } else if (job.state === "done") {
+          showToast("Job completado", "success");
+        } else {
+          showToast("Job cancelado", "info");
         }
         state.currentJobId = null;
         stopPolling();
-        setJobIndicator(false);
-        const cancel = $("#cancel-btn");
-        if (cancel) cancel.hidden = true;
+        hideJobBar();
         if (typeof refreshAfterJob === "function") refreshAfterJob();
       }
     } catch (_) {}

@@ -169,6 +169,7 @@ function openTranslateModal(slug, title) {
     pill.addEventListener("click", () => selectTranslatePill(pill)),
   );
   $("#translate-modal").hidden = false;
+  focusFirstIn($("#translate-modal"));
 }
 
 function closeTranslateModal() {
@@ -237,6 +238,7 @@ function openVolumeModal(slug, title, currentSize) {
     pill.classList.toggle("active", active);
   });
   $("#volume-modal").hidden = false;
+  focusFirstIn($("#volume-modal"));
 }
 
 function closeVolumeModal() {
@@ -289,6 +291,9 @@ document.addEventListener("DOMContentLoaded", async () => {
   $("#volume-modal-close").addEventListener("click", closeVolumeModal);
   $("#volume-modal-cancel").addEventListener("click", closeVolumeModal);
   $("#volume-modal-apply").addEventListener("click", applyVolumeSize);
+  $$("#volume-pills .pill").forEach((pill) =>
+    pill.addEventListener("click", () => selectVolumePill(pill)),
+  );
   $("#volume-modal").addEventListener("click", (e) => {
     if (e.target.id === "volume-modal") closeVolumeModal();
   });
