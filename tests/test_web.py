@@ -40,7 +40,15 @@ def test_static_css_served(monkeypatch, tmp_path):
     client = _client(monkeypatch, tmp_path)
     res = client.get("/static/css/app.css")
     assert res.status_code == 200
-    assert "--brand" in res.text
+    assert "./tokens.css" in res.text
+
+
+def test_design_tokens_served(monkeypatch, tmp_path):
+    client = _client(monkeypatch, tmp_path)
+    res = client.get("/static/css/tokens.css")
+    assert res.status_code == 200
+    assert "--accent" in res.text
+    assert client.get("/static/css/components.css").status_code == 200
 
 
 def test_config_no_auth(monkeypatch, tmp_path):

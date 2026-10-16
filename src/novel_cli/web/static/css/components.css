@@ -1,0 +1,650 @@
+/* ==========================================================================
+   components.css — Primitivas de UI (spec 0.3.0/05)
+   Botones, campos, badges, alertas, cards, dialog/sheet, toast, progreso,
+   empty state, chips, pills, popover/menu, tooltip, skeleton.
+   ========================================================================== */
+
+/* --------------------------------------------------------------------------
+   Button
+   -------------------------------------------------------------------------- */
+.btn {
+  --btn-bg: var(--primary);
+  --btn-fg: var(--primary-fg);
+  --btn-bd: transparent;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--sp-2);
+  height: 36px;
+  padding: 0 14px;
+  border: 1px solid var(--btn-bd);
+  border-radius: var(--radius);
+  background: var(--btn-bg);
+  color: var(--btn-fg);
+  font-size: var(--text-base);
+  font-weight: 500;
+  line-height: 1;
+  cursor: pointer;
+  transition: background-color 0.15s ease, border-color 0.15s ease,
+    color 0.15s ease;
+  white-space: nowrap;
+}
+
+.btn:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.btn-primary {
+  --btn-bg: var(--primary);
+  --btn-fg: var(--primary-fg);
+}
+.btn-primary:hover:not(:disabled) {
+  --btn-bg: color-mix(in srgb, var(--primary) 88%, var(--fg));
+}
+
+.btn-secondary {
+  --btn-bg: var(--card);
+  --btn-fg: var(--fg);
+  --btn-bd: var(--border);
+}
+.btn-secondary:hover:not(:disabled) {
+  --btn-bg: var(--muted);
+}
+
+.btn-ghost {
+  --btn-bg: transparent;
+  --btn-fg: var(--fg);
+}
+.btn-ghost:hover:not(:disabled) {
+  --btn-bg: var(--muted);
+}
+
+.btn-destructive {
+  --btn-bg: var(--destructive);
+  --btn-fg: #ffffff;
+}
+
+.btn-lg {
+  height: 42px;
+  padding: 0 20px;
+  font-size: var(--text-md);
+}
+
+.btn-icon {
+  width: 36px;
+  padding: 0;
+}
+
+.btn svg {
+  width: 16px;
+  height: 16px;
+  flex: none;
+}
+
+.btn.loading {
+  opacity: 0.8;
+  pointer-events: none;
+}
+
+.spinner {
+  display: none;
+  width: 14px;
+  height: 14px;
+  border: 2px solid currentColor;
+  border-right-color: transparent;
+  border-radius: 50%;
+  animation: spin 0.7s linear infinite;
+}
+.btn.loading .spinner {
+  display: inline-block;
+}
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* --------------------------------------------------------------------------
+   Campos
+   -------------------------------------------------------------------------- */
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.field[hidden] {
+  display: none;
+}
+
+.field label,
+.label {
+  font-size: var(--text-sm);
+  font-weight: 500;
+  color: var(--muted-fg);
+}
+
+.field-hint {
+  font-size: var(--text-xs);
+  color: var(--muted-fg);
+}
+
+input[type="text"],
+input[type="url"],
+input[type="number"],
+input[type="password"],
+input[type="search"],
+input[type="file"],
+select,
+textarea,
+.input {
+  width: 100%;
+  height: 38px;
+  padding: 0 12px;
+  border: 1px solid var(--input);
+  border-radius: var(--radius);
+  background: var(--card);
+  color: var(--fg);
+  font: inherit;
+  font-size: var(--text-base);
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+input[type="file"] {
+  padding: 8px 12px;
+  height: auto;
+}
+input[type="file"]::file-selector-button {
+  margin-right: 12px;
+  padding: 6px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--muted);
+  color: var(--fg);
+  font: inherit;
+  font-size: var(--text-sm);
+  cursor: pointer;
+}
+input[type="file"]::file-selector-button:hover {
+  background: color-mix(in srgb, var(--fg) 10%, var(--muted));
+}
+
+input::placeholder,
+textarea::placeholder {
+  color: var(--muted-fg);
+}
+
+input:focus,
+select:focus,
+textarea:focus,
+.input:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--ring) 22%, transparent);
+}
+
+textarea {
+  height: auto;
+  min-height: 84px;
+  padding: 8px 12px;
+  resize: vertical;
+}
+
+/* Grupo de checkboxes (legacy) */
+.checkbox-group {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sp-2);
+}
+
+.checkbox-group label {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-2);
+  padding: 7px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--card);
+  font-size: var(--text-sm);
+  color: var(--fg);
+  cursor: pointer;
+  user-select: none;
+  transition: background-color 0.15s ease, border-color 0.15s ease;
+}
+.checkbox-group label:hover {
+  background: var(--muted);
+}
+.checkbox-group label:has(input:checked) {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+}
+.checkbox-group input[type="checkbox"] {
+  width: 15px;
+  height: 15px;
+  margin: 0;
+  accent-color: var(--accent);
+}
+
+/* Switch */
+.switch {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-2);
+  cursor: pointer;
+  font-size: var(--text-sm);
+}
+.switch input {
+  appearance: none;
+  width: 34px;
+  height: 20px;
+  margin: 0;
+  border-radius: 999px;
+  background: var(--input);
+  position: relative;
+  cursor: pointer;
+  transition: background-color 0.15s ease;
+}
+.switch input::after {
+  content: "";
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: #ffffff;
+  transition: transform 0.15s ease;
+}
+.switch input:checked {
+  background: var(--accent);
+}
+.switch input:checked::after {
+  transform: translateX(14px);
+}
+
+/* Segmented control */
+.segmented {
+  display: inline-flex;
+  padding: 3px;
+  gap: 2px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--muted);
+}
+.segmented button {
+  height: 30px;
+  padding: 0 14px;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--muted-fg);
+  font-size: var(--text-sm);
+  font-weight: 500;
+  cursor: pointer;
+}
+.segmented button[aria-selected="true"] {
+  background: var(--card);
+  color: var(--fg);
+}
+
+/* --------------------------------------------------------------------------
+   Badge / Chip / Pill
+   -------------------------------------------------------------------------- */
+.badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 22px;
+  padding: 0 8px;
+  border-radius: 999px;
+  background: var(--muted);
+  color: var(--muted-fg);
+  font-size: var(--text-xs);
+  font-weight: 500;
+  white-space: nowrap;
+}
+.badge-info {
+  background: color-mix(in srgb, var(--fg) 12%, transparent);
+  color: var(--fg);
+}
+.badge-success {
+  background: color-mix(in srgb, var(--success) 16%, transparent);
+  color: var(--success);
+}
+.badge-warning {
+  background: color-mix(in srgb, var(--warning) 18%, transparent);
+  color: var(--warning);
+}
+.badge-danger {
+  background: color-mix(in srgb, var(--destructive) 16%, transparent);
+  color: var(--destructive);
+}
+.badge-neutral {
+  background: var(--muted);
+  color: var(--muted-fg);
+}
+
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 22px;
+  padding: 0 10px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  color: var(--muted-fg);
+  font-size: var(--text-xs);
+}
+
+.pill {
+  height: 34px;
+  padding: 0 14px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--card);
+  color: var(--fg);
+  font-size: var(--text-base);
+  font-weight: 500;
+  cursor: pointer;
+  transition: background-color 0.15s ease, border-color 0.15s ease;
+}
+.pill:hover {
+  background: var(--muted);
+}
+.pill.active {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+  color: var(--fg);
+}
+.pill-group {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sp-2);
+}
+
+/* --------------------------------------------------------------------------
+   Alert
+   -------------------------------------------------------------------------- */
+.alert {
+  display: flex;
+  gap: var(--sp-3);
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--muted-fg);
+  border-radius: var(--radius-card);
+  background: var(--card);
+  font-size: var(--text-base);
+}
+.alert svg {
+  width: 16px;
+  height: 16px;
+  flex: none;
+  margin-top: 2px;
+}
+.alert-info {
+  border-left-color: var(--fg);
+}
+.alert-success {
+  border-left-color: var(--success);
+}
+.alert-warning {
+  border-left-color: var(--warning);
+}
+.alert-error {
+  border-left-color: var(--destructive);
+}
+
+/* --------------------------------------------------------------------------
+   Card
+   -------------------------------------------------------------------------- */
+.card {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-card);
+  background: var(--card);
+  padding: var(--sp-4);
+}
+
+/* --------------------------------------------------------------------------
+   Dialog / Sheet
+   -------------------------------------------------------------------------- */
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--sp-4);
+  background: rgba(9, 9, 11, 0.5);
+}
+.modal-overlay[hidden] {
+  display: none;
+}
+
+.modal,
+.sheet {
+  width: 100%;
+  max-width: 440px;
+  max-height: calc(100dvh - 32px);
+  overflow: auto;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-overlay);
+  background: var(--card);
+  box-shadow: var(--shadow-overlay);
+}
+
+.modal-head {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  padding: var(--sp-4);
+  border-bottom: 1px solid var(--border);
+}
+.modal-head h3 {
+  margin: 0;
+}
+.modal-title-sub {
+  color: var(--muted-fg);
+  font-size: var(--text-sm);
+}
+.modal-close {
+  margin-left: auto;
+  width: 30px;
+  height: 30px;
+  border: 0;
+  border-radius: var(--radius);
+  background: transparent;
+  color: var(--muted-fg);
+  font-size: 20px;
+  line-height: 1;
+  cursor: pointer;
+}
+.modal-close:hover {
+  background: var(--muted);
+  color: var(--fg);
+}
+.modal-desc {
+  padding: var(--sp-4) var(--sp-4) 0;
+  color: var(--muted-fg);
+  font-size: var(--text-base);
+}
+.modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--sp-2);
+  padding: var(--sp-4);
+  margin-top: var(--sp-2);
+}
+.modal .pill-group {
+  padding: var(--sp-4) var(--sp-4) 0;
+}
+
+/* Sheet en móvil */
+@media (max-width: 640px) {
+  .modal-overlay {
+    align-items: flex-end;
+    padding: 0;
+  }
+  .modal,
+  .sheet {
+    max-width: none;
+    border-radius: var(--radius-overlay) var(--radius-overlay) 0 0;
+    max-height: 88dvh;
+  }
+}
+
+/* --------------------------------------------------------------------------
+   Toast
+   -------------------------------------------------------------------------- */
+#toast {
+  position: fixed;
+  left: 50%;
+  bottom: var(--sp-6);
+  z-index: 100;
+  transform: translate(-50%, 16px);
+  max-width: min(92vw, 460px);
+  padding: 10px 16px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--card);
+  color: var(--fg);
+  box-shadow: var(--shadow-popover);
+  font-size: var(--text-base);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.18s ease, transform 0.18s ease;
+}
+#toast.show {
+  opacity: 1;
+  transform: translate(-50%, 0);
+}
+body:has(.jobbar:not([hidden])) #toast {
+  bottom: 72px;
+}
+#toast.toast-success {
+  border-left: 3px solid var(--success);
+}
+#toast.toast-error {
+  border-left: 3px solid var(--destructive);
+}
+#toast.toast-info {
+  border-left: 3px solid var(--accent);
+}
+
+/* --------------------------------------------------------------------------
+   Progreso
+   -------------------------------------------------------------------------- */
+.bar,
+.mini-bar {
+  height: 6px;
+  border-radius: 999px;
+  background: var(--muted);
+  overflow: hidden;
+}
+.bar-fill,
+.mini-fill {
+  height: 100%;
+  width: 0;
+  border-radius: 999px;
+  background: var(--accent);
+  transition: width 0.25s ease;
+}
+
+/* --------------------------------------------------------------------------
+   Empty state
+   -------------------------------------------------------------------------- */
+.empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--sp-2);
+  grid-column: 1 / -1;
+  padding: var(--sp-12) var(--sp-4);
+  color: var(--muted-fg);
+  font-size: var(--text-base);
+  text-align: center;
+}
+.empty-icon {
+  display: inline-flex;
+  color: var(--muted-fg);
+}
+.empty-icon svg {
+  width: 40px;
+  height: 40px;
+}
+.empty-actions {
+  display: flex;
+  gap: var(--sp-2);
+  margin-top: var(--sp-2);
+}
+
+/* --------------------------------------------------------------------------
+   Popover / Menu / Tooltip
+   -------------------------------------------------------------------------- */
+.popover {
+  position: absolute;
+  z-index: 60;
+  min-width: 220px;
+  padding: var(--sp-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-card);
+  background: var(--card);
+  box-shadow: var(--shadow-popover);
+}
+.popover[hidden] {
+  display: none;
+}
+
+.menu-item {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+  width: 100%;
+  padding: 8px 10px;
+  border: 0;
+  border-radius: var(--radius);
+  background: transparent;
+  color: var(--fg);
+  font-size: var(--text-base);
+  text-align: left;
+  cursor: pointer;
+}
+.menu-item:hover {
+  background: var(--muted);
+}
+.menu-label {
+  padding: 6px 10px 4px;
+  font-size: var(--text-xs);
+  font-weight: 600;
+  color: var(--muted-fg);
+}
+
+.help-dot {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--muted-fg);
+  font-size: 11px;
+  font-weight: 600;
+  cursor: help;
+}
+
+/* --------------------------------------------------------------------------
+   Skeleton
+   -------------------------------------------------------------------------- */
+.skeleton {
+  border-radius: var(--radius);
+  background: linear-gradient(var(--muted), var(--muted));
+  background: var(--muted);
+  animation: pulse 1.4s ease-in-out infinite;
+}
+@keyframes pulse {
+  50% {
+    opacity: 0.5;
+  }
+}

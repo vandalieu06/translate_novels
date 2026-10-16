@@ -1,0 +1,257 @@
+/* ==========================================================================
+   tokens.css — Design system de novel-cli web (spec 0.3.0/05)
+   Variables, tema claro/oscuro, reset y base tipográfica.
+   Reglas: sin gradientes, sin sombras en reposo, system-ui, un solo accent.
+   ========================================================================== */
+
+:root {
+  color-scheme: light;
+
+  /* Superficies y texto */
+  --bg: #ffffff;
+  --fg: #18181b;
+  --card: #ffffff;
+  --muted: #f4f4f5;
+  --muted-fg: #71717a;
+  --border: #e4e4e7;
+  --input: #e4e4e7;
+
+  /* Marca / acción */
+  --primary: #18181b;
+  --primary-fg: #fafafa;
+  --accent: #e0575f;
+  --accent-fg: #ffffff;
+  --ring: #e0575f;
+
+  /* Estado semántico */
+  --destructive: #dc2626;
+  --success: #16a34a;
+  --warning: #d97706;
+
+  /* Radios */
+  --radius: 6px;
+  --radius-card: 8px;
+  --radius-overlay: 12px;
+
+  /* Tipografía */
+  --font: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto,
+    "Helvetica Neue", Arial, sans-serif;
+  --text-xs: 12px;
+  --text-sm: 13px;
+  --text-base: 14px;
+  --text-md: 16px;
+  --text-lg: 20px;
+  --text-xl: 28px;
+
+  /* Layout */
+  --container: 1120px;
+  --header-h: 56px;
+
+  /* Espacio */
+  --sp-1: 4px;
+  --sp-2: 8px;
+  --sp-3: 12px;
+  --sp-4: 16px;
+  --sp-6: 24px;
+  --sp-8: 32px;
+  --sp-12: 48px;
+
+  /* Sombra solo para overlays (dialog/sheet/popover) */
+  --shadow-overlay: 0 12px 32px rgba(9, 9, 11, 0.18);
+  --shadow-popover: 0 6px 20px rgba(9, 9, 11, 0.14);
+}
+
+/* Tema oscuro explícito */
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --bg: #09090b;
+  --fg: #fafafa;
+  --card: #121215;
+  --muted: #1f1f23;
+  --muted-fg: #a1a1aa;
+  --border: #27272a;
+  --input: #27272a;
+  --primary: #fafafa;
+  --primary-fg: #18181b;
+  --accent: #f2777e;
+  --accent-fg: #18181b;
+  --ring: #f2777e;
+  --destructive: #ef4444;
+  --success: #4ade80;
+  --warning: #fbbf24;
+  --shadow-overlay: 0 12px 32px rgba(0, 0, 0, 0.55);
+  --shadow-popover: 0 6px 20px rgba(0, 0, 0, 0.5);
+}
+
+/* Tema automático (sigue al sistema) o sin atributo */
+@media (prefers-color-scheme: dark) {
+  :root[data-theme="auto"],
+  :root:not([data-theme]) {
+    color-scheme: dark;
+    --bg: #09090b;
+    --fg: #fafafa;
+    --card: #121215;
+    --muted: #1f1f23;
+    --muted-fg: #a1a1aa;
+    --border: #27272a;
+    --input: #27272a;
+    --primary: #fafafa;
+    --primary-fg: #18181b;
+    --accent: #f2777e;
+    --accent-fg: #18181b;
+    --ring: #f2777e;
+    --destructive: #ef4444;
+    --success: #4ade80;
+    --warning: #fbbf24;
+    --shadow-overlay: 0 12px 32px rgba(0, 0, 0, 0.55);
+    --shadow-popover: 0 6px 20px rgba(0, 0, 0, 0.5);
+  }
+}
+
+/* --------------------------------------------------------------------------
+   Reset y base
+   -------------------------------------------------------------------------- */
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html {
+  scroll-behavior: smooth;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  min-height: 100dvh;
+  background: var(--bg);
+  color: var(--fg);
+  font-family: var(--font);
+  font-size: var(--text-base);
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+h1,
+h2,
+h3,
+h4 {
+  margin: 0;
+  font-weight: 600;
+  line-height: 1.2;
+  letter-spacing: -0.01em;
+}
+
+h1 {
+  font-size: var(--text-xl);
+}
+h2 {
+  font-size: var(--text-lg);
+}
+h3 {
+  font-size: var(--text-md);
+}
+
+p {
+  margin: 0;
+}
+
+a {
+  color: inherit;
+  text-decoration: none;
+}
+
+button {
+  font: inherit;
+  color: inherit;
+}
+
+img {
+  max-width: 100%;
+  display: block;
+}
+
+[hidden] {
+  display: none !important;
+}
+
+ul {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 2px;
+  border-radius: var(--radius);
+}
+
+::selection {
+  background: var(--accent);
+  color: var(--accent-fg);
+}
+
+/* Números tabulares para contadores */
+.tnum,
+.count,
+.num,
+.stat,
+.novel-stats,
+.cover-pct {
+  font-variant-numeric: tabular-nums;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html {
+    scroll-behavior: auto;
+  }
+  *,
+  *::before,
+  *::after {
+    transition: none !important;
+    animation: none !important;
+  }
+}
+
+/* Layout helpers */
+.container {
+  width: 100%;
+  max-width: var(--container);
+  margin: 0 auto;
+  padding: 0 var(--sp-4);
+}
+
+@media (min-width: 768px) {
+  .container {
+    padding: 0 var(--sp-6);
+  }
+}
+
+.section {
+  padding: var(--sp-8) 0;
+  scroll-margin-top: calc(var(--header-h) + 12px);
+}
+
+.section + .section {
+  border-top: 1px solid var(--border);
+}
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}

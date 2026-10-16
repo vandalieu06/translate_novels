@@ -10,6 +10,7 @@ CLI para descargar **web novels** y convertirlas en **EPUB**, con traducción op
 - **typer + rich** para el CLI y el progreso
 - **pydantic** para el manifest de estado (JSON por novela)
 - Traducción opcional: Google (gratuito, default), LibreTranslate local o **Ollama** (LLM local; sin dependencias Python extra)
+- Web opcional: `novel-cli web` (FastAPI + UI vanilla con design system propio y tema claro/oscuro, **sin build**)
 - Sin SQLite ni `googletrans`
 
 ## Instalación

@@ -26,8 +26,20 @@ def _token() -> str | None:
     return os.environ.get("NOVEL_WEB_TOKEN") or None
 
 
+_TEMPLATES = Path(__file__).parent / "templates"
+_PARTIALS = _TEMPLATES / "partials"
+_SHELL_PARTS = ("header", "jobbar", "footer")
+
+
 def _template(name: str) -> str:
-    return (Path(__file__).parent / "templates" / name).read_text(encoding="utf-8")
+    """Lee una plantilla e inyecta los parciales del shell (sin motor Jinja)."""
+    html = (_TEMPLATES / name).read_text(encoding="utf-8")
+    for part in _SHELL_PARTS:
+        token = f"<!--partial:{part}-->"
+        if token in html:
+            content = (_PARTIALS / f"{part}.html").read_text(encoding="utf-8")
+            html = html.replace(token, content)
+    return html
 
 
 def create_app(*, output_dir: Path | None = None) -> FastAPI:

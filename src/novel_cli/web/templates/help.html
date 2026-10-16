@@ -6,182 +6,130 @@
   <title>Ayuda · novel-cli web</title>
   <link
     rel="icon"
-    href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%23fa6f78'/%3E%3Ctext x='16' y='22' font-family='Arial' font-size='16' font-weight='700' fill='%23fff' text-anchor='middle'%3EN%3C/text%3E%3C/svg%3E"
+    href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%23e0575f'/%3E%3Ctext x='16' y='22' font-family='system-ui' font-size='16' font-weight='700' fill='%23fff' text-anchor='middle'%3EN%3C/text%3E%3C/svg%3E"
   />
-  <link rel="preconnect" href="https://fonts.googleapis.com" />
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-  <link
-    href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+JP:wght@200;400;500;700&display=swap"
-    rel="stylesheet"
-  />
+  <script>
+    (function () {
+      try {
+        document.documentElement.dataset.theme =
+          localStorage.getItem("novel_web_theme") || "auto";
+      } catch (e) {
+        document.documentElement.dataset.theme = "auto";
+      }
+    })();
+  </script>
   <link rel="stylesheet" href="/static/css/app.css" />
 </head>
 <body data-page="help">
-  <header class="site-header">
-    <div class="container">
-      <a class="brand" href="/">
-        <span class="logo">N</span>
-        novel<span>-cli</span>
-      </a>
-      <nav id="main-nav">
-        <a href="/" data-nav="landing">Descargar</a>
-        <a href="/biblioteca" data-nav="library">Biblioteca</a>
-        <a href="/ayuda" data-nav="help">Ayuda</a>
-      </nav>
-      <div class="spacer"></div>
-      <span class="backend-pill" id="backend-pill" hidden></span>
-      <div class="server-status" id="server-status">
-        <span class="dot"></span><span id="server-status-text">Servidor OK</span>
+  <!--partial:header-->
+
+  <main>
+    <section class="section">
+      <div class="container">
+        <div class="section-header">
+          <h1 class="page-title">Ayuda</h1>
+          <p class="section-desc">Qué hace cada acción, en corto.</p>
+        </div>
+
+        <div class="help-sections">
+          <section class="help-block">
+            <h2>Descarga</h2>
+            <dl class="help-list">
+              <div>
+                <dt>Nueva descarga</dt>
+                <dd>Pega la URL de la web novel y lanza la descarga. Baja un tomo por defecto (50 capítulos); relanza la misma URL para avanzar al siguiente.</dd>
+              </div>
+              <div>
+                <dt>Capítulos por tomo</dt>
+                <dd>Cuántos capítulos entran en cada EPUB (50 / 100 / 150 / 200). Se puede cambiar después desde la ficha.</dd>
+              </div>
+              <div>
+                <dt>Todos los capítulos</dt>
+                <dd>Descarga la novela completa de una vez en vez de por tomos (equivale a <code>--all</code>).</dd>
+              </div>
+              <div>
+                <dt>Forzar re-descarga</dt>
+                <dd>Vuelve a descargar capítulos aunque ya existan en disco.</dd>
+              </div>
+              <div>
+                <dt>Forzar Playwright</dt>
+                <dd>Usa un navegador real para obtener la página. Solo si la descarga HTTP falla.</dd>
+              </div>
+              <div>
+                <dt>Subir un PDF</dt>
+                <dd>Importa un PDF de novela (light novel con ilustraciones). El EPUB original conserva el formato del PDF.</dd>
+              </div>
+            </dl>
+          </section>
+
+          <section class="help-block">
+            <h2>Traducción</h2>
+            <dl class="help-list">
+              <div>
+                <dt>Traducir</dt>
+                <dd>Traduce la novela al idioma elegido (es, en, fr, de, it, pt, ru, ja, ko, zh) y genera el EPUB traducido conservando el original.</dd>
+              </div>
+              <div>
+                <dt>Traducir pendientes</dt>
+                <dd>Traduce solo los capítulos que faltan o quedaron vacíos, sin volver a descargar.</dd>
+              </div>
+              <div>
+                <dt>Re-traducir</dt>
+                <dd>En novelas ya traducidas: traduce los pendientes y regenera los EPUB en el idioma guardado, sin sobrescribir lo traducido.</dd>
+              </div>
+            </dl>
+          </section>
+
+          <section class="help-block">
+            <h2>EPUB</h2>
+            <dl class="help-list">
+              <div>
+                <dt>Tomos N</dt>
+                <dd>Cambia el tamaño de tomo (50 / 100 / 150 / 200 / ALL) y reconstruye los EPUB sin descargar ni traducir. ALL genera un único EPUB.</dd>
+              </div>
+              <div>
+                <dt>Regenerar EPUBs</dt>
+                <dd>Reconstruye los tomos (original y traducido) desde los capítulos en disco, sin cambiar el tamaño.</dd>
+              </div>
+              <div>
+                <dt>Descargar EPUB</dt>
+                <dd>Descarga un tomo, en su versión original o traducida.</dd>
+              </div>
+            </dl>
+          </section>
+
+          <section class="help-block">
+            <h2>Estado</h2>
+            <dl class="help-list">
+              <div>
+                <dt>Actualizar (Sync)</dt>
+                <dd>En la ficha de una novela ya descargada: obtiene los capítulos nuevos sin volver a pegar la URL.</dd>
+              </div>
+              <div>
+                <dt>Capítulos vacíos</dt>
+                <dd>Un aviso indica capítulos que llegaron sin contenido. Quedan pendientes: vuelve con Actualizar o Re-traducir.</dd>
+              </div>
+              <div>
+                <dt>Cancelar</dt>
+                <dd>Detiene el job en curso. El progreso se guarda en el servidor; puedes reanudar con la misma URL.</dd>
+              </div>
+              <div>
+                <dt>Token de acceso</dt>
+                <dd>Si el servidor usa <code>NOVEL_WEB_TOKEN</code>, introdúcelo en Ajustes (arriba a la derecha).</dd>
+              </div>
+            </dl>
+          </section>
+        </div>
       </div>
-    </div>
-  </header>
+    </section>
+  </main>
 
-  <section class="section page-intro">
-    <div class="container">
-      <div class="section-header">
-        <div class="kicker">Guía rápida</div>
-        <h2>Qué hace cada acción</h2>
-        <p class="section-desc">Resumen de las acciones de la web por si olvidas qué hace cada una.</p>
-      </div>
-    </div>
-  </section>
+  <!--partial:jobbar-->
+  <!--partial:footer-->
 
-  <section class="section">
-    <div class="container">
-      <div class="guide-grid">
-
-        <div class="guide-card">
-          <div class="guide-icon">&#11015;</div>
-          <div>
-            <h3>Nueva descarga</h3>
-            <p>Pega la URL de la web novel y lanza la descarga. Descarga por lotes de un tomo (default 50 capítulos); vuelve a lanzar la misma URL para avanzar al siguiente tomo.</p>
-          </div>
-        </div>
-
-        <div class="guide-card">
-          <div class="guide-icon">&#128278;</div>
-          <div>
-            <h3>Capítulos por tomo</h3>
-            <p>Cuántos capítulos entran en cada EPUB (50 / 100 / 150 / 200). Puedes cambiarlo después desde la ficha de la novela.</p>
-          </div>
-        </div>
-
-        <div class="guide-card">
-          <div class="guide-icon">&#127760;</div>
-          <div>
-            <h3>Traducir</h3>
-            <p>Traduce la novela a un idioma que elijas (es, en, fr, de, it, pt, ru, ja, ko, zh). En la ficha de una novela no traducida, el botón <strong>Traducir</strong> abre el selector de idioma; en la descarga se elige al activar "Traducir".</p>
-          </div>
-        </div>
-
-        <div class="guide-card">
-          <div class="guide-icon">&#9733;</div>
-          <div>
-            <h3>Todos los capítulos</h3>
-            <p>Descarga toda la novela de una vez en vez de por tomos. Equivale a la opción <code>--all</code> del CLI.</p>
-          </div>
-        </div>
-
-        <div class="guide-card">
-          <div class="guide-icon">&#128221;</div>
-          <div>
-            <h3>Traducir pendientes</h3>
-            <p>Traduce solo los capítulos que faltan o quedaron vacíos, sin descargar de nuevo. Útil si ya tenías capítulos descargados sin traducir.</p>
-          </div>
-        </div>
-
-        <div class="guide-card">
-          <div class="guide-icon">&#8634;</div>
-          <div>
-            <h3>Forzar re-descarga</h3>
-            <p>Vuelve a descargar capítulos aunque ya existan en disco. Ignora el estado guardado.</p>
-          </div>
-        </div>
-
-        <div class="guide-card">
-          <div class="guide-icon">&#127918;</div>
-          <div>
-            <h3>Forzar Playwright</h3>
-            <p>Usa un navegador real (JS) para obtener la página en vez del descargador HTTP. Solo si la descarga normal falla.</p>
-          </div>
-        </div>
-
-        <div class="guide-card">
-          <div class="guide-icon">&#8635;</div>
-          <div>
-            <h3>Sync (↻)</h3>
-            <p>En la ficha de una novela ya descargada: obtiene los capítulos nuevos sin volver a pegar la URL. Descarga el siguiente tomo pendiente y respeta si la novela está traducida.</p>
-          </div>
-        </div>
-
-        <div class="guide-card">
-          <div class="guide-icon">&#128221;</div>
-          <div>
-            <h3>Re-traducir (📝)</h3>
-            <p>En novelas ya traducidas: traduce los capítulos pendientes (faltantes o vacíos) y regenera los EPUB en el idioma guardado. No sobrescribe lo ya traducido.</p>
-          </div>
-        </div>
-
-        <div class="guide-card">
-          <div class="guide-icon">&#128196;</div>
-          <div>
-            <h3>Tomos N (📄)</h3>
-            <p>Cambia el tamaño de tomo (50/100/150/200/ALL) y regenera los EPUBs con el nuevo tamaño sin descargar ni traducir. ALL genera un único EPUB.</p>
-          </div>
-        </div>
-
-        <div class="guide-card">
-          <div class="guide-icon">&#9851;</div>
-          <div>
-            <h3>Regenerar EPUBs (♻)</h3>
-            <p>Reconstruye los tomos (original y traducido) desde los capítulos en disco, sin cambiar el tamaño ni descargar. Útil para aplicar mejoras del generador, como la página final.</p>
-          </div>
-        </div>
-
-        <div class="guide-card">
-          <div class="guide-icon">&#128190;</div>
-          <div>
-            <h3>Descargar EPUB</h3>
-            <p>En la sección de archivos de cada novela: descarga un tomo en formato EPUB, en su versión original o traducida (ES).</p>
-          </div>
-        </div>
-
-        <div class="guide-card">
-          <div class="guide-icon">&#9888;</div>
-          <div>
-            <h3>Capítulos vacíos</h3>
-            <p>Un aviso indica capítulos que llegaron sin contenido. Quedan pendientes de reintento: vuelve con Sync o Re-traducir.</p>
-          </div>
-        </div>
-
-        <div class="guide-card">
-          <div class="guide-icon">&#9209;</div>
-          <div>
-            <h3>Cancelar</h3>
-            <p>Detiene el job en curso (descarga, traducción o EPUB). El servidor guarda el progreso; puedes reanudar con la misma URL.</p>
-          </div>
-        </div>
-
-        <div class="guide-card">
-          <div class="guide-icon">&#128274;</div>
-          <div>
-            <h3>Token de acceso</h3>
-            <p>Si el servidor usa <code>NOVEL_WEB_TOKEN</code>, la web lo pide una vez y lo recuerda en el navegador.</p>
-          </div>
-        </div>
-
-      </div>
-    </div>
-  </section>
-
-  <footer class="site-footer">
-    <div class="container">
-      <span class="foot-brand">novel-cli web</span>
-      <span>FastAPI + UI responsive · diseño MOSH</span>
-    </div>
-  </footer>
-
-  <div id="toast"></div>
+  <div id="toast" role="status" aria-live="polite"></div>
+  <script src="/static/js/theme.js"></script>
   <script src="/static/js/common.js"></script>
+  <script src="/static/js/jobs.js"></script>
 </body>
 </html>

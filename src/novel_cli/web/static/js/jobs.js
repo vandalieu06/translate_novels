@@ -1,5 +1,10 @@
 "use strict";
 
+/* ==========================================================================
+   jobs.js — job bar global, envío de jobs y seguimiento en vivo
+   spec 0.3.0/06
+   ========================================================================== */
+
 async function hasActiveJob() {
   try {
     const jobs = await api("/api/jobs");
@@ -10,157 +15,50 @@ async function hasActiveJob() {
 }
 
 function setButtonLoading(btn, loading) {
+  if (!btn) return;
   btn.disabled = loading;
   btn.classList.toggle("loading", loading);
   const label = btn.querySelector(".btn-label");
   if (label) {
     label.textContent = loading
-      ? btn.dataset.loading || "Procesando..."
+      ? btn.dataset.loading || "Procesando…"
       : btn.dataset.label || label.textContent;
   }
 }
 
-async function submitJob(event) {
-  event.preventDefault();
-  const url = $("#job-url").value.trim();
-  if (!url) return showToast("Introduce una URL", "error");
-  const body = {
-    url,
-    volume_size: parseInt($("#job-volume").value, 10) || 50,
-    translate: $("#job-translate").checked,
-    all: $("#job-all").checked,
-    translate_pending: $("#job-pending").checked,
-    force: $("#job-force").checked,
-    playwright: $("#job-playwright").checked,
-    concurrency: parseInt($("#job-concurrency").value, 10) || 4,
-  };
-  const langField = $("#job-language");
-  if (body.translate && langField) {
-    body.target_language = langField.value;
-  }
-  const tcField = $("#job-translate-concurrency");
-  if (tcField && !tcField.closest(".field").hidden) {
-    body.translate_concurrency = parseInt(tcField.value, 10) || 1;
-  }
-  const btn = $("#job-submit");
-  if (await hasActiveJob()) {
-    showToast("Ya hay un job en curso", "info");
-    return;
-  }
-  setButtonLoading(btn, true);
-  try {
-    const { job_id } = await api("/api/jobs", { method: "POST", body });
-    state.currentJobId = job_id;
-    showProgressPanel(url);
-    resetProgress();
-    connectSocket(job_id);
-    startPolling();
-    showToast("Descarga lanzada", "success");
-  } catch (e) {
-    showToast(e.message, "error");
-  } finally {
-    setButtonLoading(btn, false);
-  }
+/* --------------------------------------------------------------------------
+   Job bar
+   -------------------------------------------------------------------------- */
+function showJobBar(label) {
+  const bar = $("#job-bar");
+  if (!bar) return;
+  bar.hidden = false;
+  const title = $("#job-bar-title");
+  if (title) title.textContent = label || "Job en curso";
+  const indicator = $("#job-indicator");
+  if (indicator) indicator.hidden = false;
+  const cancel = $("#cancel-btn");
+  if (cancel) cancel.hidden = false;
 }
 
-async function submitPdfJob(event) {
-  event.preventDefault();
-  const fileInput = $("#pdf-file");
-  const file = fileInput.files[0];
-  if (!file) return showToast("Selecciona un PDF", "error");
-  if (await hasActiveJob()) {
-    showToast("Ya hay un job en curso", "info");
-    return;
-  }
-  const body = new FormData();
-  body.append("file", file);
-  body.append("source_language", $("#pdf-source").value);
-  body.append("volume_size", parseInt($("#pdf-volume").value, 10) || 50);
-  const translate = $("#pdf-translate").checked;
-  if (translate) {
-    body.append("translate", "true");
-    body.append("target_language", $("#pdf-language").value);
-  }
-  const btn = $("#pdf-submit");
-  setButtonLoading(btn, true);
-  try {
-    const { job_id } = await api("/api/upload", { method: "POST", body });
-    state.currentJobId = job_id;
-    showProgressPanel(file.name);
-    resetProgress();
-    connectSocket(job_id);
-    startPolling();
-    showToast("PDF subido, convirtiendo", "success");
-  } catch (e) {
-    showToast(e.message, "error");
-  } finally {
-    setButtonLoading(btn, false);
-  }
+function hideJobBar() {
+  const bar = $("#job-bar");
+  if (bar) bar.hidden = true;
+  const indicator = $("#job-indicator");
+  if (indicator) indicator.hidden = true;
+  const detail = $("#job-bar-detail");
+  if (detail) detail.hidden = true;
+  const toggle = $("#job-bar-toggle");
+  if (toggle) toggle.setAttribute("aria-expanded", "false");
 }
 
-function showProgressPanel(label) {
-  const url = $("#job-progress-url");
-  if (url) url.textContent = label;
-  setServerStatus(true);
-  const jobSection = $("#novel-job");
-  if (jobSection) jobSection.hidden = false;
-  const panel = $("#job-progress");
-  if (!panel) return;
-  panel.classList.add("visible");
-  panel.scrollIntoView({ behavior: "smooth", block: "nearest" });
-}
-
-async function cancelJob() {
-  if (!state.currentJobId) return;
-  try {
-    await api(`/api/jobs/${state.currentJobId}/cancel`, { method: "POST" });
-  } catch (e) {
-    showToast(e.message, "error");
-  }
-}
-
-async function syncNovel(btn) {
-  if (await hasActiveJob()) {
-    showToast("Ya hay un job en curso. Espera a que termine.", "info");
-    return;
-  }
-  const slug = btn.dataset.slug;
-  const title = btn.dataset.title;
-  setButtonLoading(btn, true);
-  try {
-    const { job_id } = await api(`/api/novels/${slug}/sync`, { method: "POST" });
-    state.currentJobId = job_id;
-    showProgressPanel(title);
-    resetProgress();
-    connectSocket(job_id);
-    startPolling();
-    showToast(`Sincronizando: ${title}`, "info");
-  } catch (e) {
-    showToast(e.message, "error");
-    setButtonLoading(btn, false);
-  }
-}
-
-async function retranslateNovel(btn) {
-  if (await hasActiveJob()) {
-    showToast("Ya hay un job en curso. Espera a que termine.", "info");
-    return;
-  }
-  const slug = btn.dataset.slug;
-  const title = btn.dataset.title;
-  setButtonLoading(btn, true);
-  try {
-    const { job_id } = await api(`/api/novels/${slug}/retranslate`, { method: "POST" });
-    state.currentJobId = job_id;
-    showProgressPanel(title);
-    resetProgress();
-    connectSocket(job_id);
-    startPolling();
-    showToast(`Re-traduciendo: ${title}`, "info");
-  } catch (e) {
-    showToast(e.message, "error");
-    setButtonLoading(btn, false);
-  }
+function toggleJobDetail(force) {
+  const detail = $("#job-bar-detail");
+  const toggle = $("#job-bar-toggle");
+  if (!detail || !toggle) return;
+  const open = force !== undefined ? force : detail.hidden;
+  detail.hidden = !open;
+  toggle.setAttribute("aria-expanded", open ? "true" : "false");
 }
 
 function resetProgress() {
@@ -173,33 +71,10 @@ function resetProgress() {
   const line = $("#status-line");
   if (line) {
     line.className = "status-line";
-    line.innerHTML = "";
+    line.textContent = "";
   }
-  setJobBadge("en curso", "badge-info");
-  const cancel = $("#cancel-btn");
-  if (cancel) cancel.style.display = "inline-flex";
-}
-
-function setJobBadge(text, cls) {
-  const badge = $("#job-state-badge");
-  if (!badge) return;
-  badge.textContent = text;
-  badge.className = "badge " + cls;
-}
-
-function onJobEvent(event) {
-  if (event.type === "status") {
-    renderStatus(event);
-  } else if (event.type === "progress") {
-    renderProgress(event);
-  }
-  if (event.type === "done" || event.type === "error" || event.type === "cancelled") {
-    setServerStatus(false);
-    stopPolling();
-    if (state.socket) state.socket.close();
-    state.currentJobId = null;
-    refreshNovels();
-  }
+  const barCount = $("#job-bar-count");
+  if (barCount) barCount.textContent = "";
 }
 
 function renderStatus(event) {
@@ -207,21 +82,19 @@ function renderStatus(event) {
   if (!line) return;
   if (event.phase === "error") {
     line.className = "status-line error";
-    setJobBadge("error", "badge-danger");
-    line.innerHTML = `<span class="tag">error</span>${escapeHtml(event.message || "")}`;
+    line.textContent = event.message || "";
     return;
   }
   if (event.phase === "done") {
     line.className = "status-line done";
-    setJobBadge("listo", "badge-success");
-    line.innerHTML = `<span class="tag">listo</span>${escapeHtml(event.message || "")}`;
+    line.textContent = event.message || "";
     return;
   }
   line.className = "status-line";
   if (event.phase === "status" && /^AVISO/i.test(event.message || "")) {
     line.classList.add("warning");
   }
-  line.innerHTML = `<span class="tag">${escapeHtml(event.phase)}</span>${escapeHtml(event.message || "")}`;
+  line.textContent = event.message || "";
 }
 
 function renderProgress(event) {
@@ -231,6 +104,26 @@ function renderProgress(event) {
   const pct = event.total > 0 ? (event.done / event.total) * 100 : 0;
   bar.style.width = pct + "%";
   count.textContent = `${event.done}/${event.total}`;
+  const barCount = $("#job-bar-count");
+  if (barCount && event.phase === "download") {
+    barCount.textContent = `${event.done}/${event.total}`;
+  }
+}
+
+function onJobEvent(event) {
+  if (event.type === "status") renderStatus(event);
+  else if (event.type === "progress") renderProgress(event);
+  if (event.type === "done" || event.type === "error" || event.type === "cancelled") {
+    if (event.type === "done") showToast("Job completado", "success");
+    if (state.socket) state.socket.close();
+    state.socket = null;
+    state.currentJobId = null;
+    stopPolling();
+    setJobIndicator(false);
+    const cancel = $("#cancel-btn");
+    if (cancel) cancel.hidden = true;
+    if (typeof refreshAfterJob === "function") refreshAfterJob();
+  }
 }
 
 function connectSocket(jobId) {
@@ -244,7 +137,6 @@ function connectSocket(jobId) {
   state.socket = ws;
 }
 
-/* ---------- Polling fallback / final state ---------- */
 let pollTimer = null;
 function startPolling() {
   stopPolling();
@@ -257,20 +149,15 @@ function startPolling() {
         if (job.state === "error") {
           if (line) {
             line.className = "status-line error";
-            line.innerHTML = `<span class="tag">error</span>${escapeHtml(job.error || "error")}`;
+            line.textContent = job.error || "error";
           }
-          setJobBadge("error", "badge-danger");
-        } else if (job.state === "done") {
-          setJobBadge("listo", "badge-success");
-        } else {
-          setJobBadge("cancelado", "badge-neutral");
         }
-        const cancel = $("#cancel-btn");
-        if (cancel) cancel.style.display = "none";
-        setServerStatus(false);
-        stopPolling();
         state.currentJobId = null;
-        refreshNovels();
+        stopPolling();
+        setJobIndicator(false);
+        const cancel = $("#cancel-btn");
+        if (cancel) cancel.hidden = true;
+        if (typeof refreshAfterJob === "function") refreshAfterJob();
       }
     } catch (_) {}
   }, 1500);
@@ -279,4 +166,186 @@ function startPolling() {
 function stopPolling() {
   if (pollTimer) clearInterval(pollTimer);
   pollTimer = null;
+}
+
+function setJobIndicator(busy) {
+  const indicator = $("#job-indicator");
+  if (!indicator) return;
+  indicator.hidden = !busy;
+  indicator.classList.toggle("busy", busy);
+}
+
+function attachJob(jobId, label) {
+  state.currentJobId = jobId;
+  showJobBar(label);
+  resetProgress();
+  setJobIndicator(true);
+  connectSocket(jobId);
+  startPolling();
+  toggleJobDetail(true);
+}
+
+async function cancelJob() {
+  if (!state.currentJobId) return;
+  try {
+    await api(`/api/jobs/${state.currentJobId}/cancel`, { method: "POST" });
+  } catch (e) {
+    showToast(e.message, "error");
+  }
+}
+
+/* Al cargar: si hay un job en curso (p. ej. lanzado desde otra página),
+   reconectar el job bar. */
+async function initJobBar() {
+  const toggle = $("#job-bar-toggle");
+  const cancel = $("#cancel-btn");
+  if (toggle) toggle.innerHTML = icon("chevron-down");
+  if (cancel) cancel.innerHTML = icon("x");
+  if (toggle) toggle.addEventListener("click", () => toggleJobDetail());
+  if (cancel) cancel.addEventListener("click", cancelJob);
+  const indicator = $("#job-indicator");
+  if (indicator) {
+    indicator.innerHTML = icon("play");
+    indicator.addEventListener("click", () => {
+      showJobBar($("#job-bar-title") ? $("#job-bar-title").textContent : "");
+      toggleJobDetail(true);
+    });
+  }
+  try {
+    const jobs = await api("/api/jobs");
+    const active = jobs.find((j) => j.state === "pending" || j.state === "running");
+    if (active) attachJob(active.id, active.url || "Job en curso");
+  } catch (_) {}
+}
+
+/* --------------------------------------------------------------------------
+   Envío de jobs
+   -------------------------------------------------------------------------- */
+function collectWebOptions() {
+  const body = {
+    url: $("#job-url").value.trim(),
+    volume_size: parseInt($("#job-volume").value, 10) || 50,
+    translate: $("#job-translate").checked,
+    all: $("#job-all").checked,
+    translate_pending: $("#job-pending").checked,
+    force: $("#job-force").checked,
+    playwright: $("#job-playwright").checked,
+    concurrency: parseInt($("#job-concurrency").value, 10) || 4,
+  };
+  if (body.translate && $("#job-language")) {
+    body.target_language = $("#job-language").value;
+  }
+  const tc = $("#job-translate-concurrency");
+  if (tc && !$("#field-translate-concurrency").hidden) {
+    body.translate_concurrency = parseInt(tc.value, 10) || 1;
+  }
+  return body;
+}
+
+async function submitJob(event) {
+  event.preventDefault();
+  const body = collectWebOptions();
+  if (!body.url) {
+    showToast("Introduce una URL", "error");
+    return;
+  }
+  if (await hasActiveJob()) {
+    showToast("Ya hay un job en curso", "info");
+    return;
+  }
+  if (body.force || body.all) {
+    const ok = await confirmDialog({
+      title: "Confirmar descarga",
+      message: body.force
+        ? "Se volverán a descargar capítulos que ya existen en disco."
+        : "Se descargará la novela completa de una vez (puede tardar).",
+      confirmLabel: "Continuar",
+    });
+    if (!ok) return;
+  }
+  const btn = $("#job-submit");
+  setButtonLoading(btn, true);
+  try {
+    saveWebOptions(body);
+    const { job_id } = await api("/api/jobs", { method: "POST", body });
+    attachJob(job_id, body.url);
+    showToast("Descarga lanzada", "success");
+  } catch (e) {
+    showToast(e.message, "error");
+  } finally {
+    setButtonLoading(btn, false);
+  }
+}
+
+async function submitPdfJob(event) {
+  event.preventDefault();
+  const file = $("#pdf-file").files[0];
+  if (!file) {
+    showToast("Selecciona un PDF", "error");
+    return;
+  }
+  if (await hasActiveJob()) {
+    showToast("Ya hay un job en curso", "info");
+    return;
+  }
+  const body = new FormData();
+  body.append("file", file);
+  body.append("source_language", $("#pdf-source").value);
+  body.append("volume_size", parseInt($("#pdf-volume").value, 10) || 50);
+  if ($("#pdf-translate").checked) {
+    body.append("translate", "true");
+    body.append("target_language", $("#pdf-language").value);
+  }
+  const btn = $("#pdf-submit");
+  setButtonLoading(btn, true);
+  try {
+    const { job_id } = await api("/api/upload", { method: "POST", body });
+    attachJob(job_id, file.name);
+    showToast("PDF subido, convirtiendo", "success");
+  } catch (e) {
+    showToast(e.message, "error");
+  } finally {
+    setButtonLoading(btn, false);
+  }
+}
+
+/* --------------------------------------------------------------------------
+   Acciones de novela (ficha)
+   -------------------------------------------------------------------------- */
+async function syncNovel(btn) {
+  if (await hasActiveJob()) {
+    showToast("Ya hay un job en curso. Espera a que termine.", "info");
+    return;
+  }
+  setButtonLoading(btn, true);
+  try {
+    const { job_id } = await api(
+      `/api/novels/${btn.dataset.slug}/sync`,
+      { method: "POST" },
+    );
+    attachJob(job_id, btn.dataset.title || "");
+    showToast(`Sincronizando: ${btn.dataset.title || ""}`, "info");
+  } catch (e) {
+    showToast(e.message, "error");
+    setButtonLoading(btn, false);
+  }
+}
+
+async function retranslateNovel(btn) {
+  if (await hasActiveJob()) {
+    showToast("Ya hay un job en curso. Espera a que termine.", "info");
+    return;
+  }
+  setButtonLoading(btn, true);
+  try {
+    const { job_id } = await api(
+      `/api/novels/${btn.dataset.slug}/retranslate`,
+      { method: "POST" },
+    );
+    attachJob(job_id, btn.dataset.title || "");
+    showToast(`Re-traduciendo: ${btn.dataset.title || ""}`, "info");
+  } catch (e) {
+    showToast(e.message, "error");
+    setButtonLoading(btn, false);
+  }
 }

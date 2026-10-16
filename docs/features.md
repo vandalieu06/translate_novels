@@ -58,7 +58,11 @@
 
 ### Web (`novel-cli web`)
 - **FastAPI + Uvicorn**: servidor con UI responsive (mobile-first) servida por el propio backend, sin toolchain de build (HTML + CSS + JS vanilla).
-- **Diseño MOSH** (`DESIGN.md`): coral `#fa6f78` + grayscale, IBM Plex Sans JP / system-ui, CTA negros, flat con bordes 1px, headings weight 400, degular para números grandes.
+- **Diseño propio** (`DESIGN.md`): design system compacto orientado a herramienta (tokens claro/oscuro, un único accent coral, `system-ui`, flat con bordes 1px, sin gradientes ni emojis; iconos SVG). CSS partido en `static/css/tokens.css` (tokens + tema + reset), `components.css` (primitivas) y `app.css` (shell + páginas); `static/js/theme.js` gestiona el tema (auto/claro/oscuro) y los iconos.
+- **Shell común y job bar global**: cabecera con nav, indicador de backend y **Ajustes** (tema + token); una **job bar** fija abajo muestra el job en curso desde cualquier página y se reconecta al navegar. El shell se inyecta por parciales (`templates/partials/`) sin motor de plantillas.
+- **Home directa**: sin hero de marketing; selector **Desde web / Desde PDF** con "Opciones avanzadas" plegadas y **recordar las últimas opciones**.
+- **Biblioteca con buscar/filtrar/ordenar** (por estado: traducidas / con vacíos / PDF) y densidad grid/lista, persistidos en `localStorage`.
+- **Ficha agrupada**: acción primaria + acciones secundarias (Actualizar / Traducir / Tomos / Regenerar), lista de EPUBs Original/Traducción y diálogos tipo *sheet* en móvil.
 - **Jobs en background**: cada descarga/traducción corre como `run_pipeline` en un job (un job activo a la vez) con su propio fetcher/translator y cierre limpio.
 - **Concurrencia de traducción en la UI**: campo "Concurrencia traducción" en el form, visible solo al activar "Traducir"; se envía como `translate_concurrency`.
 - **Progreso en vivo por WebSocket** (`/api/jobs/{id}/ws`): fases de descarga, traducción y EPUB con los mismos callbacks que `rich`.

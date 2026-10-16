@@ -1,0 +1,48 @@
+<div class="jobbar" id="job-bar" hidden>
+  <div class="jobbar-inner container">
+    <span class="jobbar-dot" aria-hidden="true"></span>
+    <span class="jobbar-title" id="job-bar-title">Job en curso</span>
+    <span class="jobbar-count count" id="job-bar-count"></span>
+    <div class="spacer"></div>
+    <button
+      class="btn btn-ghost btn-icon"
+      id="job-bar-toggle"
+      type="button"
+      aria-expanded="false"
+      aria-controls="job-bar-detail"
+      aria-label="Ver detalle del job"
+    ></button>
+    <button
+      class="btn btn-secondary btn-icon"
+      id="cancel-btn"
+      type="button"
+      aria-label="Cancelar job"
+      hidden
+    ></button>
+  </div>
+  <div class="jobbar-detail" id="job-bar-detail" hidden>
+    <div class="container">
+      <div class="phases">
+        <div class="phase">
+          <span class="phase-icon" data-icon="download"></span>
+          <span class="phase-label">Descarga</span>
+          <div class="bar"><div class="bar-fill" id="bar-download"></div></div>
+          <span class="count" id="count-download">0/0</span>
+        </div>
+        <div class="phase">
+          <span class="phase-icon" data-icon="translate"></span>
+          <span class="phase-label">Traducción</span>
+          <div class="bar"><div class="bar-fill" id="bar-translate"></div></div>
+          <span class="count" id="count-translate">0/0</span>
+        </div>
+        <div class="phase">
+          <span class="phase-icon" data-icon="file-text"></span>
+          <span class="phase-label">EPUB</span>
+          <div class="bar"><div class="bar-fill" id="bar-epub"></div></div>
+          <span class="count" id="count-epub">0/0</span>
+        </div>
+      </div>
+      <div class="status-line" id="status-line" aria-live="polite"></div>
+    </div>
+  </div>
+</div>
