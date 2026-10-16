@@ -253,3 +253,52 @@ async def test_resolve_toc_force_and_refresh_bypass_cache(tmp_path):
         )
         assert crawled is True
         assert fetcher.fetches == [LISTING, LISTING_2]
+
+
+async def test_resolve_toc_peek_toc_bypasses_fresh_cache(tmp_path):
+    """peek_toc=True fuerza el peek aunque la cache este fresca (y crawlea si hay novedades)."""
+    _warm(
+        tmp_path,
+        datetime.now(UTC).isoformat(),
+        [LISTING, LISTING_2],
+        [(1, "u1"), (2, "u2")],
+    )
+    site = _two_page_site()
+    fetcher = _FakeFetcher(site)
+    result, _pages, crawled = await _resolve_toc(
+        fetcher=fetcher,
+        adapter=_FakeAdapter(site),
+        url=URL,
+        output_dir=tmp_path,
+        resume=True,
+        force=False,
+        refresh_toc=False,
+        peek_toc=True,
+    )
+    assert crawled is True
+    assert [c.num for c in result.chapters] == [1, 2, 3, 4, 5, 6]
+
+
+async def test_resolve_toc_peek_toc_no_news_uses_cache(tmp_path):
+    """Con peek_toc, si el peek no ve novedades se reutiliza la cache (solo 2 peticiones)."""
+    _warm(
+        tmp_path,
+        datetime.now(UTC).isoformat(),
+        [LISTING, LISTING_2],
+        [(1, "u1"), (6, "u6")],
+    )
+    site = _two_page_site()
+    fetcher = _FakeFetcher(site)
+    result, _pages, crawled = await _resolve_toc(
+        fetcher=fetcher,
+        adapter=_FakeAdapter(site),
+        url=URL,
+        output_dir=tmp_path,
+        resume=True,
+        force=False,
+        refresh_toc=False,
+        peek_toc=True,
+    )
+    assert crawled is False
+    assert [c.num for c in result.chapters] == [1, 6]
+    assert fetcher.fetches == [LISTING, LISTING_2]

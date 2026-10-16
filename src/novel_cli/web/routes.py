@@ -322,6 +322,7 @@ def build_router(manager: JobManager) -> APIRouter:
                 "concurrency": config.DEFAULT_CONCURRENCY,
                 "target_language": manifest.translated_language,
                 "operation": "sync",
+                "peek_toc": True,
             },
         )
         return {"job_id": job.id}

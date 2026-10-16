@@ -228,6 +228,7 @@ class JobManager:
                 notifier=notifier,
                 operation=operation,
                 refresh_toc=bool(options.get("refresh_toc")),
+                peek_toc=bool(options.get("peek_toc")),
             )
             job.slug = manifest.slug
             job.result = {

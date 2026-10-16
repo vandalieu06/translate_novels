@@ -221,6 +221,7 @@ def test_sync_novel_creates_job(monkeypatch, tmp_path):
     assert captured["download_all"] is False
     assert captured["force"] is False
     assert captured["operation"] == "sync"
+    assert captured["peek_toc"] is True
 
 
 def test_retranslate_novela_not_found(monkeypatch, tmp_path):

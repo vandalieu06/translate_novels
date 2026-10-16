@@ -156,6 +156,7 @@ async def run_pipeline(
     notifier: Notifier | None = None,
     operation: str = "download",
     refresh_toc: bool = False,
+    peek_toc: bool = False,
 ) -> Manifest:
     """Ejecuta el pipeline completo y devuelve el manifest final."""
     if translate_pending:
@@ -183,6 +184,7 @@ async def run_pipeline(
         resume=resume,
         force=force,
         refresh_toc=refresh_toc,
+        peek_toc=peek_toc,
     )
     metadata = site.metadata
     if not site.chapters:
@@ -571,12 +573,16 @@ async def _resolve_toc(
     resume: bool,
     force: bool,
     refresh_toc: bool,
+    peek_toc: bool = False,
 ) -> tuple[SiteMetadata, list[str], bool]:
     """Devuelve ``(SiteMetadata, listing_pages, crawled)`` usando la cache si aplica.
 
-    - Cache fresca (< TTL) → sin peticiones.
-    - Cache caducada → peek de 2 paginas; si no hay novedades, se reutiliza.
+    - Cache fresca (< TTL) → sin peticiones (salvo ``peek_toc``, que fuerza el peek).
+    - Cache caducada (o ``peek_toc``) → peek de 2 paginas; si no hay novedades, se reutiliza.
     - Sin cache / ``force`` / ``refresh_toc`` → crawl completo (``crawled=True``).
+
+    ``peek_toc`` permite comprobar novedades en una accion manual (Sync) aunque la
+    cache siga dentro del TTL, con un coste de solo 2 peticiones.
     """
     using_cache = resume and not force and not refresh_toc
     existing_dir, existing_manifest = _find_manifest_by_url_or_none(output_dir, url)
@@ -584,7 +590,7 @@ async def _resolve_toc(
 
     if cache is not None and existing_manifest is not None and cache.chapters:
         age = cache.age_seconds()
-        if age <= config.toc_ttl_seconds():
+        if age <= config.toc_ttl_seconds() and not peek_toc:
             logger.info(
                 "TOC: usando cache de %s (%d capitulos, %.0f min)",
                 existing_dir.name if existing_dir else "?",
