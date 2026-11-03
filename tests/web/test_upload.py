@@ -104,6 +104,7 @@ def test_upload_creates_pdf_job(monkeypatch, tmp_path):
     assert captured["source_language"] == "en"
     assert captured["volume_size"] == 50
     assert captured["translate"] is False
+    assert captured["original_filename"] == "mi-novela.pdf"
     # el archivo quedó en staging y se limpia tras el job
     assert not (tmp_path / ".uploads" / job_id).exists()
 
@@ -190,3 +191,68 @@ def test_config_exposes_upload(monkeypatch, tmp_path):
     assert data["upload_enabled"] is True
     assert data["upload_max_mb"] == 100
     assert "es" in data["source_languages"]
+
+def test_upload_passes_metadata_and_kind(monkeypatch, tmp_path):
+    captured: dict[str, Any] = {}
+
+    async def fake(**kwargs: Any) -> Manifest:
+        captured.update(kwargs)
+        return Manifest(slug="novela", title="Mi Novela")
+
+    monkeypatch.setattr("novel_cli.web.jobs.run_pdf_pipeline", fake)
+    client = TestClient(create_app(output_dir=tmp_path))
+
+    res = client.post(
+        "/api/upload",
+        files={"file": ("mi-novela.pdf", b"%PDF-fake", "application/pdf")},
+        data={
+            "source_language": "es",
+            "title": "Mi Novela",
+            "author": "Autora",
+            "kind": "webnovel",
+        },
+    )
+    assert res.status_code == 200
+    job_id = res.json()["job_id"]
+    data = _wait_done(client, job_id)
+    assert data["state"] == "done"
+    assert captured["title"] == "Mi Novela"
+    assert captured["author"] == "Autora"
+    assert captured["original_filename"] == "mi-novela.pdf"
+    assert captured["split_mode"] == "webnovel"
+
+
+def test_upload_rejects_invalid_kind(monkeypatch, tmp_path):
+    client = _client(monkeypatch, tmp_path)
+    res = client.post(
+        "/api/upload",
+        files={"file": ("n.pdf", b"%PDF", "application/pdf")},
+        data={"kind": "foo"},
+    )
+    assert res.status_code == 400
+    assert "kind" in res.json()["detail"]
+
+
+def test_upload_uses_explicit_original_filename(monkeypatch, tmp_path):
+    captured: dict[str, Any] = {}
+
+    async def fake(**kwargs: Any) -> Manifest:
+        captured.update(kwargs)
+        return Manifest(slug="kunon", title="Kunon the Sorcerer Can See v01")
+
+    monkeypatch.setattr("novel_cli.web.jobs.run_pdf_pipeline", fake)
+    client = TestClient(create_app(output_dir=tmp_path))
+
+    res = client.post(
+        "/api/upload",
+        files={"file": ("uuid-cache.pdf", b"%PDF-fake", "application/pdf")},
+        data={
+            "source_language": "es",
+            "original_filename": "Kunon the Sorcerer Can See v01.pdf",
+        },
+    )
+    assert res.status_code == 200
+    job_id = res.json()["job_id"]
+    data = _wait_done(client, job_id)
+    assert data["state"] == "done"
+    assert captured["original_filename"] == "Kunon the Sorcerer Can See v01.pdf"

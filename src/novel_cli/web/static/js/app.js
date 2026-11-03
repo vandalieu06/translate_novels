@@ -139,6 +139,15 @@ function setupPdfForm() {
   };
   checkbox.addEventListener("change", sync);
   sync();
+  const fileInput = $("#pdf-file");
+  const titleInput = $("#pdf-title");
+  if (fileInput && titleInput) {
+    fileInput.addEventListener("change", () => {
+      const file = fileInput.files[0];
+      if (!file || titleInput.value.trim()) return;
+      titleInput.value = file.name.replace(/\.pdf$/i, "");
+    });
+  }
   const sourceLangs = (state.config && state.config.source_languages) || {};
   const source = $("#pdf-source");
   if (source) {

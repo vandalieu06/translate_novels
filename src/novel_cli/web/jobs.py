@@ -128,7 +128,14 @@ class JobManager:
         )
         self._jobs[job.id] = job
         task = asyncio.create_task(
-            self._run(job, {**options, "pdf_path": str(pdf_path)})
+            self._run(
+                job,
+                {
+                    **options,
+                    "pdf_path": str(pdf_path),
+                    "original_filename": options.get("original_filename") or filename,
+                },
+            )
         )
         job.task = task
         return job
@@ -284,6 +291,10 @@ class JobManager:
                 target_language=options.get("target_language"),
                 volume_size=options.get("volume_size"),
                 translator=translator,
+                title=options.get("title"),
+                author=options.get("author"),
+                original_filename=options.get("original_filename"),
+                split_mode=str(options.get("split_mode") or "auto"),
                 on_status=lambda msg: job.status("status", msg),
                 on_epub_progress=lambda d, t: job.progress("epub", d, t),
                 on_translate_progress=lambda d, t: job.progress("translate", d, t),

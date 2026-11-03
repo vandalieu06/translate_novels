@@ -34,7 +34,7 @@
 - **Idioma destino elegible** (`--target <lang>`): lista curada (`config.TRANSLATE_TARGET_LANGUAGES`: es, en, fr, de, it, pt, ru, ja, ko, zh; env `NOVEL_TRANSLATE_TARGET`). `-t/--translate` genera el EPUB original **y** el traducido (`Novela 1-50 (ES).epub`, sufijo según idioma).
 - **`--translate-pending`**: traduce solo los capítulos pendientes (ya descargados, sin traducir) sin descargar nuevos ni tocar el TOC — ideal para retomar una traducción cortada por rate-limit.
 
-### Importación de PDFs (spec 0.3.0/01)
+### Importación de PDFs (specs 0.3.0/01, 12 y 13)
 - **`novel-cli pdf <archivo>`**: importa un PDF de novela (webnovel o light novel con
   ilustraciones) reutilizando **pdf-to-epub** como librería.
 - **EPUB original rico**: lo genera pdf-to-epub y conserva imágenes, tablas y formato del
@@ -46,11 +46,18 @@
   si `target != source` genera el EPUB traducido además del original. Nunca `auto` como origen.
 - **`Manifest.source_pdf`**: distingue novelas PDF de web; `rebuild_volumes`/`volume-size`
   regeneran **solo el EPUB traducido** y conservan intacto el original rico.
+- **Metadatos con fallback**: si el PDF no trae título se usa el nombre del archivo;
+  `--title`/`--author` (CLI) y los campos equivalentes de la web mandan sobre los metadatos.
+  Se sanean placeholders (`<unknown>`, `Microsoft Word - …`, `untitled`). El manifest guarda
+  `source_filename`, `source_pdf_sha256` y `pdf_kind`, y evita pisar otra novela con el mismo
+  título (`-2`, `-3`).
+- **Tipo de PDF** (`--kind auto|book|webnovel`): `book` recupera capítulos con títulos en
+  imagen; `webnovel` descarta capítulos vacíos y líneas de TOC duplicadas.
 - **Límite de subida** para la web: `NOVEL_UPLOAD_MAX_MB` (default 100).
 
 ### CLI
 - Comando único `novel-cli <url>` con flags `-o`, `-v`, `-t`, `--resume/--no-resume`, `-f`, `--all`, `-p`, `-c`, `-tc`, `-V`.
-- Comando **`novel-cli pdf <archivo>`** para importar PDFs (con `--source`, `-t`, `--target`, `-v`).
+- Comando **`novel-cli pdf <archivo>`** para importar PDFs (con `--source`, `-t`, `--target`, `-v`, `--title`, `--author`, `--kind`).
 - **Códigos de salida** `0-4` (éxito, validación, red/descarga, traducción, EPUB/manifest).
 - **Barras de progreso** con `rich` (descarga, traducción, EPUB) y logs detallados con `-V`.
 - Ruta por defecto: env `NOVEL_OUTPUT_DIR` o `./output`.
@@ -72,8 +79,8 @@
 - **Regenerar EPUBs** (`POST /api/novels/{slug}/rebuild`): botón **♻ Regenerar EPUBs** en la ficha; reconstruye los tomos (original y traducido) desde disco sin cambiar el tamaño ni descargar (aplica mejoras del generador, como la página final `FIN`).
 - **Job lock en el servidor**: la UI consulta `GET /api/jobs` (estados `pending`/`running`) para saber si hay un job activo en vez de fiarse del estado local, y lo permite de nuevo al terminar.
 - **Web multi-página**: `/` (descarga + progreso + novelas recientes), `/biblioteca` (grid de solo portadas, tap → ficha), `/novela/{slug}` (ficha individual: info, acciones Traducir/Sync/Re-traducir/Tomos, progreso del job y listado de EPUBs Original/Traducción) y `/ayuda` (guía estática de qué hace cada acción). JS partido en módulos compartidos (`common.js`, `jobs.js`) + uno por página.
-- **API REST**: `GET /api/jobs`, `POST /api/jobs`, `GET /api/jobs/{id}`, `POST /api/jobs/{id}/cancel`, `GET /api/novels`, `GET /api/novels/{slug}`, descarga de EPUB y portada, `POST /api/novels/{slug}/sync`, `POST /api/novels/{slug}/retranslate`, `POST /api/novels/{slug}/volume-size`, `POST /api/novels/{slug}/rebuild`, `POST /api/upload` (PDF multipart), `GET /api/config` (incluye `translate_backend`, `ollama_model`, `translate_languages`, `default_translate_target`, `telegram_enabled`, `upload_enabled`, `upload_max_mb`, `source_languages`).
-- **Subida de PDFs** (`POST /api/upload`): tarjeta "Subir un PDF" en la portada con archivo, idioma del PDF (default `es`), traducción opcional, idioma destino y tomos. Crea un job `pdf` que reusa `run_pdf_pipeline` con el mismo panel de progreso (status + barras). El archivo va a staging y se limpia al terminar.
+- **API REST**: `GET /api/jobs`, `POST /api/jobs`, `GET /api/jobs/{id}`, `POST /api/jobs/{id}/cancel`, `GET /api/novels`, `GET /api/novels/{slug}`, descarga de EPUB y portada, `POST /api/novels/{slug}/sync`, `POST /api/novels/{slug}/retranslate`, `POST /api/novels/{slug}/volume-size`, `POST /api/novels/{slug}/rebuild`, `POST /api/upload` (PDF multipart: `file`, `source_language`, `translate`, `target_language`, `volume_size`, `title`, `author`, `kind`, `original_filename`), `GET /api/config` (incluye `translate_backend`, `ollama_model`, `translate_languages`, `default_translate_target`, `telegram_enabled`, `upload_enabled`, `upload_max_mb`, `source_languages`).
+- **Subida de PDFs** (`POST /api/upload`): tarjeta "Subir un PDF" en la portada con archivo, título/autor opcionales, tipo de PDF (`kind=auto|book|webnovel`), idioma del PDF (default `es`), traducción opcional, idioma destino y tomos. Crea un job `pdf` que reusa `run_pdf_pipeline` con el mismo panel de progreso (status + barras). El archivo va a staging y se limpia al terminar.
 - **Novelas PDF en la biblioteca**: badge `PDF` en portadas y ficha; **Sync oculto** (no hay URL); **Re-traducir** funciona por slug (`pdf-retranslate`), regenerando solo el EPUB traducido y conservando el original rico.
 - **Auth opcional** con `NOVEL_WEB_TOKEN` (cabecera `X-Auth-Token`); `--host`/`--port`/`--no-browser` configurables.
 - Entry points: `novel-cli web` y `novel-cli-web`.

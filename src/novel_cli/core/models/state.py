@@ -20,6 +20,9 @@ class Manifest(BaseModel):
     author: str | None = None
     source_url: str = ""
     source_pdf: str | None = None
+    source_filename: str | None = None
+    source_pdf_sha256: str | None = None
+    pdf_kind: str | None = None
     language_code: str = "auto"
     cover_path: str | None = None
     chapters_total: int = 0

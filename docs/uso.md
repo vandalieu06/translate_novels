@@ -73,7 +73,19 @@ novel-cli https://example.com/novel --force
 novel-cli pdf "mi-novela.pdf"                     # solo conversión (idioma es)
 novel-cli pdf "mi-novela.pdf" --source en -t      # original EN + traducido a es
 novel-cli pdf "mi-novela.pdf" --source en -t --target fr
+
+# Forzar metadatos cuando el PDF no los trae (o son incorrectos)
+novel-cli pdf "mi-novela.pdf" --title "Mi Novela" --author "Autora"
+
+# Indicar el tipo de PDF: book (light novel) o webnovel
+novel-cli pdf "light-novel.pdf" --kind book
+novel-cli pdf "webnovel.pdf" --kind webnovel
 ```
+
+Si el PDF no trae título, se usa el **nombre del archivo** (sin `.pdf`); `--title` y
+`--author` tienen prioridad sobre los metadatos. `--kind auto` (default) detecta webnovel
+cuando hay muchos capítulos y book cuando hay pocos; `book` recupera títulos renderizados
+como imagen y `webnovel` descarta capítulos vacíos y líneas de TOC duplicadas.
 
 ## Estructura de salida
 
@@ -388,7 +400,7 @@ La web se organiza en varias páginas (navegación común: **Descargar · Biblio
 ### Qué ofrece
 
 - **Lanzar descarga**: URL, tomo (`50`/`100`), concurrencia, idioma de traducción y opciones (`--translate`, `--all`, `--translate-pending`, `--force`, `--playwright`), igual que el CLI.
-- **Subir un PDF** (tarjeta "Subir un PDF"): archivo + idioma del PDF (default `es`) + traducción opcional (idioma destino y tomos). El EPUB original conserva el formato del PDF; si el idioma difiere del destino, se genera también el EPUB traducido. El progreso se muestra en el mismo panel (status + barras). Límite: `NOVEL_UPLOAD_MAX_MB` (default 100).
+- **Subir un PDF** (tarjeta "Subir un PDF"): archivo + título/autor opcionales + tipo de PDF (Automático / Libro / Webnovel) + idioma del PDF (default `es`) + traducción opcional (idioma destino y tomos). El título se prerrellena con el nombre del archivo y se puede editar; si el PDF no trae metadatos se usa ese nombre. El EPUB original conserva el formato del PDF; si el idioma difiere del destino, se genera también el EPUB traducido. El progreso se muestra en el mismo panel (status + barras). Límite: `NOVEL_UPLOAD_MAX_MB` (default 100).
 - **Progreso en vivo** por WebSocket: fases de descarga, traducción y EPUB con barras y contadores.
 - **Traducir** (botón **🌐 Traducir** en la ficha de novelas no traducidas): abre un **modal para elegir el idioma** (es, en, fr, de, it, pt, ru, ja, ko, zh) y lanza un job de **solo traducción** de los capítulos pendientes; si el idioma difiere del guardado, **re-traduce todo** sin volver a descargar.
 - **Sincronizar novela** (botón **↻ Sync** en la ficha de la novela): obtiene nuevos capítulos de una novela ya descargada **sin re-pegar la URL**. El sync reusa la `source_url` guardada y el mismo mecanismo de la CLI (misma URL + `--resume` → descarga el siguiente tomo pendiente), y **hereda la traducción, el idioma y el tamaño de tomo** de la novela: si la novela se descargó traducida, los nuevos capítulos también se traducen y se regenera el EPUB traducido.

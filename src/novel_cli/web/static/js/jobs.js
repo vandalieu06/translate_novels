@@ -294,7 +294,12 @@ async function submitPdfJob(event) {
   const body = new FormData();
   body.append("file", file);
   body.append("source_language", $("#pdf-source").value);
+  body.append("kind", $("#pdf-kind")?.value || "auto");
   body.append("volume_size", parseInt($("#pdf-volume").value, 10) || 50);
+  const title = $("#pdf-title")?.value.trim();
+  if (title) body.append("title", title);
+  const author = $("#pdf-author")?.value.trim();
+  if (author) body.append("author", author);
   if ($("#pdf-translate").checked) {
     body.append("translate", "true");
     body.append("target_language", $("#pdf-language").value);

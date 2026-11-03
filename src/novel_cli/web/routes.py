@@ -100,6 +100,10 @@ def build_router(manager: JobManager) -> APIRouter:
         translate: bool = Form(False),
         target_language: str | None = Form(None),
         volume_size: int | None = Form(None),
+        title: str | None = Form(None),
+        author: str | None = Form(None),
+        kind: str = Form("auto"),
+        original_filename: str | None = Form(None),
     ) -> dict[str, str]:
         """Sube un PDF y lo convierte a EPUB (con traduccion opcional)."""
         if not file.filename or not file.filename.lower().endswith(".pdf"):
@@ -108,6 +112,10 @@ def build_router(manager: JobManager) -> APIRouter:
             )
         if source_language not in config.SOURCE_LANGUAGES:
             raise HTTPException(status_code=400, detail="source_language no soportado")
+        if kind not in ("auto", "book", "webnovel"):
+            raise HTTPException(
+                status_code=400, detail="kind solo acepta auto, book o webnovel"
+            )
         if (
             translate
             and target_language is not None
@@ -136,6 +144,10 @@ def build_router(manager: JobManager) -> APIRouter:
                 "translate": translate,
                 "target_language": target_language,
                 "volume_size": volume_size,
+                "title": title or None,
+                "author": author or None,
+                "split_mode": kind,
+                "original_filename": original_filename or None,
             },
         )
         return {"job_id": job.id}

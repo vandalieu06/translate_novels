@@ -283,12 +283,22 @@ editable desde `../pdf-to-epub`):
 
 - `convert_pdf(pdf_path, workdir, ...)`: llama a `pdf_to_epub.core.pipeline.run()` con
   `keep_intermediate=True` (CPU intensivo; en la web se ejecuta en `asyncio.to_thread`) y a
-  `extract_docx_chapters(docx_path)` → mapea `TextChapter` a `Chapter` (párrafos planos).
-- `run_pdf_pipeline(...)`: genera el **EPUB original** (el de pdf-to-epub, formato rico),
-  guarda `source.pdf` + portada, escribe `raw/<NNNN>.md` y, si `target != source`, traduce
-  (`translate_chapters(source=...)`) y genera el EPUB traducido con el builder de novel_cli.
-- `Manifest.source_pdf` distingue novelas PDF de web: `rebuild_volumes`/`volume-size`
-  regeneran **solo el traducido** y conservan intacto el original rico.
+  `extract_docx_chapters(docx_path, mode=split_mode)` → mapea `TextChapter` a `Chapter`
+  (párrafos planos).
+- `resolve_pdf_metadata(...)`: prioridad **override del usuario > metadato válido > nombre
+  del archivo**. Sanea placeholders (`<unknown>`, `Microsoft Word - …`, `untitled`, …);
+  `convert_pdf` pasa el título/autor resueltos a `ConversionOptions` para que el EPUB
+  original y el manifest usen el mismo valor.
+- `run_pdf_pipeline(..., title, author, original_filename, split_mode)`: genera el **EPUB
+  original** (el de pdf-to-epub, formato rico), guarda `source.pdf` + portada, escribe
+  `raw/<NNNN>.md` y, si `target != source`, traduce (`translate_chapters(source=...)`) y
+  genera el EPUB traducido con el builder de novel_cli.
+- `split_mode` (`auto|book|webnovel`) viaja a `ConversionOptions`; pdf-to-epub aplica la
+  estrategia de capítulos y `extract_docx_chapters` usa la misma normalización.
+- `Manifest.source_pdf`, `source_filename`, `source_pdf_sha256` y `pdf_kind` distinguen y
+  protegen las novelas PDF: `unique_slug` reutiliza la carpeta si el hash del PDF coincide y
+  sufija `-2`/`-3` si otro PDF comparte título. `rebuild_volumes`/`volume-size` regeneran
+  **solo el traducido** y conservan intacto el original rico.
 - Reutiliza los helpers del pipeline (ahora públicos): `generate_epubs`,
   `build_epub_chapters`, `load_all_from_disk`, `translated_placeholder`,
   `cleanup_orphan_epubs`.
@@ -297,7 +307,7 @@ editable desde `../pdf-to-epub`):
 
 - `cli/app.py` expone apps typer separadas y `main()` despacha: `novel-cli <url>` (comando por defecto `run`), `novel-cli pdf`, `novel-cli web` y `novel-cli toc`.
 - `run(url, -o, -v, -t, --resume/--no-resume, -f, --all, -p, -c, -V)`.
-- `pdf(file, --source, -t, --target, -v, -o)`.
+- `pdf(file, --source, -t, --target, -v, -o, --title, --author, --kind)`.
 - Validación: URL http(s), `-v ∈ {50, 100}`, `-c ≥ 1` → exit 1.
 - `ProgressUI` (`cli/progress.py`) conecta `on_status`/`on_progress` de core a barras `rich.progress` (descarga, traducción, EPUB).
 
@@ -306,7 +316,7 @@ editable desde `../pdf-to-epub`):
 Capa de presentación web (FastAPI + Uvicorn) que reutiliza `core` tal cual. `web/` no contiene lógica de dominio:
 
 - `jobs.py` — **JobManager**: cada job lanza `run_pipeline` como `asyncio.create_task` dentro del event loop de Uvicorn (un job activo a la vez). Construye su propio fetcher/translator/notifier por ejecución y los cierra en `finally`. Los callbacks `on_status`/`on_progress` del pipeline publican **eventos** (`{type, phase, done, total, message}`) a un buffer + suscriptores.
-- `routes.py` — API REST: `GET /api/jobs` (lista de jobs con su `state`, para que la UI detecte un job activo), `POST /api/jobs` (valida como el CLI; acepta `target_language`), `GET /api/jobs/{id}`, `POST /api/jobs/{id}/cancel`, `GET /api/novels`, `GET /api/novels/{slug}` (incluye `translated_language`), `GET /api/novels/{slug}/epub/{file}`, `GET /api/novels/{slug}/cover`, `POST /api/novels/{slug}/sync` (hereda idioma y tamaño de tomo), `POST /api/novels/{slug}/retranslate` (solo-traducción de pendientes con opciones del manifest; acepta `{target_language}` y **fuerza la re-traducción** si el idioma cambia), `POST /api/novels/{slug}/volume-size` (cambia el tamaño de tomo y reconstruye los EPUBs desde el disco), `POST /api/novels/{slug}/rebuild` (reconstruye los EPUBs con el mismo `volume_size`, sin cambiar nada: aplica mejoras del builder como la página final), `GET /api/config` (incluye `translate_backend`, `translate_languages`, `default_translate_target` y `telegram_enabled`).
+- `routes.py` — API REST: `GET /api/jobs` (lista de jobs con su `state`, para que la UI detecte un job activo), `POST /api/jobs` (valida como el CLI; acepta `target_language`), `GET /api/jobs/{id}`, `POST /api/jobs/{id}/cancel`, `GET /api/novels`, `GET /api/novels/{slug}` (incluye `translated_language`), `GET /api/novels/{slug}/epub/{file}`, `GET /api/novels/{slug}/cover`, `POST /api/novels/{slug}/sync` (hereda idioma y tamaño de tomo), `POST /api/novels/{slug}/retranslate` (solo-traducción de pendientes con opciones del manifest; acepta `{target_language}` y **fuerza la re-traducción** si el idioma cambia), `POST /api/novels/{slug}/volume-size` (cambia el tamaño de tomo y reconstruye los EPUBs desde el disco), `POST /api/novels/{slug}/rebuild` (reconstruye los EPUBs con el mismo `volume_size`, sin cambiar nada: aplica mejoras del builder como la página final), `GET /api/config` (incluye `translate_backend`, `translate_languages`, `default_translate_target` y `telegram_enabled`) y `POST /api/upload` (multipart: `file`, `source_language`, `translate`, `target_language`, `volume_size`, `title`, `author`, `kind`, `original_filename`).
 - `ws.py` — WebSocket `/api/jobs/{id}/ws`: reenvía los eventos del job al cliente (reusa el mismo mecanismo de callbacks que `rich`).
 - `app.py` — `create_app(output_dir)` monta static/templates y aplica auth opcional por token (`NOVEL_WEB_TOKEN`, cabecera `X-Auth-Token`). Sirve **4 páginas** (`GET /`, `/biblioteca`, `/ayuda` y `/novela/{slug}`). `main()` arranca Uvicorn (`--host`/`--port`/`--no-browser`).
 - `templates/` + `static/` — UI **multi-página** responsive sin build (design system propio en `static/css/` + JS vanilla por página): `index.html` (nueva descarga web/PDF + recientes), `library.html` (biblioteca con buscar/filtrar/ordenar), `novel.html` (ficha con acciones agrupadas y EPUBs) y `help.html` (guía agrupada). Los parciales del shell (`templates/partials/header|jobbar|footer.html`) los inyecta `app.py::_template` por placeholders `<!--partial:...-->` (sin Jinja). El JS se parte en módulos compartidos: `theme.js` (tema + iconos SVG), `common.js` (auth/api/toast/config + Ajustes + helpers) y `jobs.js` (job lock, **job bar global** con WebSocket + polling, envío de jobs, cancelar, sync/retraducción), más uno por página (`app.js`, `library.js`, `novel.js`). Las páginas leen los datos de la API existente; el slug de la ficha lo obtiene `novel.js` de la ruta.

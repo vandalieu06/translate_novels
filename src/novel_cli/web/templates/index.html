@@ -119,13 +119,36 @@
               <input type="file" id="pdf-file" accept=".pdf,application/pdf" required />
               <p class="field-hint">
                 Webnovel o light novel con ilustraciones. El EPUB original conserva
-                el formato del PDF.
+                el formato del PDF. Si el PDF no trae metadatos, se usa el nombre
+                del archivo.
               </p>
+            </div>
+            <div class="row-fields">
+              <div class="field">
+                <label for="pdf-title">Título (opcional)</label>
+                <input
+                  type="text"
+                  id="pdf-title"
+                  placeholder="Se usa el nombre del archivo"
+                />
+              </div>
+              <div class="field">
+                <label for="pdf-author">Autor (opcional)</label>
+                <input type="text" id="pdf-author" placeholder="Metadatos del PDF" />
+              </div>
             </div>
             <div class="row-fields">
               <div class="field">
                 <label for="pdf-source">Idioma del PDF</label>
                 <select id="pdf-source"></select>
+              </div>
+              <div class="field">
+                <label for="pdf-kind">Tipo de PDF</label>
+                <select id="pdf-kind">
+                  <option value="auto" selected>Automático</option>
+                  <option value="book">Libro / light novel</option>
+                  <option value="webnovel">Webnovel</option>
+                </select>
               </div>
               <div class="field">
                 <label for="pdf-volume">Capítulos por tomo</label>

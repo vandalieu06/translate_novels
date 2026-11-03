@@ -56,6 +56,8 @@ Importar un PDF de novela (EPUB original conservando el formato + traducción op
 
 ```bash
 novel-cli pdf "mi-novela.pdf" --source en -t      # original EN + traducido a es
+novel-cli pdf "mi-novela.pdf" --title "Mi Novela" --author "Autora"
+novel-cli pdf "webnovel.pdf" --kind webnovel -t
 ```
 
 Los logs e historial van a `output/logs/` (configurables con `NOVEL_LOG_DIR`/`NOVEL_LOG_FILE`);

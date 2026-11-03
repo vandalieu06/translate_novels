@@ -306,6 +306,27 @@ def _make_pdf_app() -> typer.Typer:
                 help="Directorio de salida (default: core/config.default_output)",
             ),
         ] = None,
+        title: Annotated[
+            str | None,
+            typer.Option(
+                "--title",
+                help="Titulo de la novela (default: metadatos del PDF o nombre del archivo)",
+            ),
+        ] = None,
+        author: Annotated[
+            str | None,
+            typer.Option(
+                "--author",
+                help="Autor de la novela (default: metadatos del PDF)",
+            ),
+        ] = None,
+        kind: Annotated[
+            str,
+            typer.Option(
+                "--kind",
+                help="Tipo de PDF: auto, book (light novel) o webnovel",
+            ),
+        ] = "auto",
         source: Annotated[
             str,
             typer.Option(
@@ -366,6 +387,8 @@ def _make_pdf_app() -> typer.Typer:
             )
         if volume_size not in (50, 100, 150, 200):
             _fail("--volume-size solo acepta 50, 100, 150 o 200", EXIT_VALIDATION)
+        if kind not in ("auto", "book", "webnovel"):
+            _fail("--kind solo acepta auto, book o webnovel", EXIT_VALIDATION)
 
         error_console = Console(stderr=True)
         if verbose:
@@ -408,6 +431,10 @@ def _make_pdf_app() -> typer.Typer:
                             target_language=target,
                             volume_size=volume_size,
                             translator=translator,
+                            title=title or None,
+                            author=author or None,
+                            original_filename=file.name,
+                            split_mode=kind,
                             on_status=ui.status,
                             on_epub_progress=ui.callback("epub", "Generando EPUBs"),
                             on_translate_progress=ui.callback(

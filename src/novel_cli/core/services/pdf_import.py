@@ -9,6 +9,7 @@ builder de novel_cli (texto plano, tomos).
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import logging
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -16,6 +17,7 @@ from pathlib import Path
 
 from pdf_to_epub.core.config import ConversionOptions
 from pdf_to_epub.core.export import extract_docx_chapters
+from pdf_to_epub.core.pdf.inspect import read_metadata
 from pdf_to_epub.core.pipeline import run as pdf_to_epub_run
 
 from novel_cli.core import config
@@ -30,16 +32,45 @@ from novel_cli.core.services.pipeline import (
     translated_placeholder,
 )
 from novel_cli.core.services.translate import Translator, translate_chapters
-from novel_cli.core.utils.names import epub_name, slugify, title_to_filename
+from novel_cli.core.utils.names import epub_name, slugify, title_to_filename, unique_slug
 
 logger = logging.getLogger(__name__)
 
 StatusCallback = Callable[[str], None]
 ProgressCallback = Callable[[int, int], None]
 
+_INVALID_METADATA = {
+    "",
+    "<unknown>",
+    "unknown",
+    "desconocido",
+    "desconocida",
+    "anonymous",
+    "anónimo",
+    "anonimo",
+    "untitled",
+    "sin título",
+    "sin titulo",
+    "n/a",
+    "na",
+    "none",
+    "null",
+}
+_INVALID_METADATA_PREFIXES = ("microsoft word", "microsoft® word")
+_INVALID_METADATA_SUFFIXES = (".pdf", ".docx", ".doc")
+_VALID_SPLIT_MODES = ("auto", "book", "webnovel")
+
 
 class PdfImportError(Exception):
     """Fallo al importar o convertir un PDF."""
+
+
+@dataclass
+class ResolvedPdfMetadata:
+    """Metadatos de PDF ya saneados y con fallback al nombre de archivo."""
+
+    title: str
+    author: str | None
 
 
 @dataclass
@@ -53,6 +84,55 @@ class PdfImport:
     epub_path: Path
     cover_path: Path | None
     docx_path: Path
+    split_mode: str = "auto"
+
+
+def _clean_metadata_value(value: str | None) -> str | None:
+    """Return a usable metadata value, or None for empty/placeholder values."""
+    if value is None:
+        return None
+    text = " ".join(value.split()).strip()
+    if not text:
+        return None
+    lowered = text.casefold()
+    if lowered in _INVALID_METADATA:
+        return None
+    if lowered.startswith(_INVALID_METADATA_PREFIXES):
+        return None
+    if lowered.endswith(_INVALID_METADATA_SUFFIXES):
+        return None
+    return text
+
+
+def resolve_pdf_metadata(
+    pdf_path: Path,
+    *,
+    title: str | None = None,
+    author: str | None = None,
+    metadata_title: str | None = None,
+    metadata_author: str | None = None,
+) -> ResolvedPdfMetadata:
+    """Resolve title/author: user override > valid metadata > file name."""
+    resolved_title = _clean_metadata_value(title)
+    if resolved_title is None:
+        resolved_title = _clean_metadata_value(metadata_title)
+    if resolved_title is None:
+        resolved_title = _clean_metadata_value(pdf_path.stem)
+    if resolved_title is None:
+        resolved_title = "Novela sin título"
+
+    resolved_author = _clean_metadata_value(author)
+    if resolved_author is None:
+        resolved_author = _clean_metadata_value(metadata_author)
+    return ResolvedPdfMetadata(title=resolved_title, author=resolved_author)
+
+
+def _sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
 
 
 def convert_pdf(
@@ -62,6 +142,8 @@ def convert_pdf(
     title: str | None = None,
     author: str | None = None,
     language: str = "es",
+    split_mode: str = "auto",
+    original_filename: str | None = None,
     output_epub: Path | None = None,
     on_status: StatusCallback | None = None,
 ) -> PdfImport:
@@ -71,6 +153,31 @@ def convert_pdf(
     thread/executor desde un contexto async. Requiere ``keep_intermediate=True``
     para conservar el DOCX del que se extrae el texto.
     """
+    if split_mode not in _VALID_SPLIT_MODES:
+        raise PdfImportError(
+            f"modo de capitulos no soportado: {split_mode} "
+            f"(disponibles: {', '.join(_VALID_SPLIT_MODES)})"
+        )
+
+    try:
+        metadata = read_metadata(pdf_path)
+        metadata_title = metadata.title
+        metadata_author = metadata.authors[0] if metadata.authors else None
+    except Exception:  # noqa: BLE001 - pdf-to-epub volvera a leerlo
+        metadata_title = None
+        metadata_author = None
+    resolved = resolve_pdf_metadata(
+        Path(original_filename) if original_filename else pdf_path,
+        title=title,
+        author=author,
+        metadata_title=metadata_title,
+        metadata_author=metadata_author,
+    )
+
+    workdir.mkdir(parents=True, exist_ok=True)
+    if output_epub is None:
+        output_epub = workdir / f"{pdf_path.stem}.epub"
+
     options = ConversionOptions(
         input_pdf=pdf_path,
         output_epub=output_epub,
@@ -78,9 +185,11 @@ def convert_pdf(
         keep_intermediate=True,
         clean_headers_footers=True,
         reflow_paragraphs=True,
-        title=title,
-        author=author,
+        force=True,
+        title=resolved.title,
+        author=resolved.author,
         language=language,
+        split_mode=split_mode,
     )
 
     def progress(message: str) -> None:
@@ -97,22 +206,25 @@ def convert_pdf(
             "pdf-to-epub no dejo el DOCX intermedio; fallo la conversion"
         )
 
+    resolved_mode = getattr(report, "split_mode", split_mode) or split_mode
     text_chapters = extract_docx_chapters(
         report.docx_path,
-        fallback_title=report.title or pdf_path.stem,
+        fallback_title=resolved.title,
+        mode=resolved_mode,
     )
     chapters = [
         Chapter(num=i + 1, title=chapter.title, url="", paragraphs=chapter.paragraphs)
         for i, chapter in enumerate(text_chapters)
     ]
     return PdfImport(
-        title=report.title or pdf_path.stem,
-        author=report.author,
-        language=report.language,
+        title=resolved.title,
+        author=resolved.author,
+        language=report.language or language,
         chapters=chapters,
         epub_path=report.output_epub,
         cover_path=report.cover_path,
         docx_path=report.docx_path,
+        split_mode=resolved_mode,
     )
 
 
@@ -135,6 +247,10 @@ async def run_pdf_pipeline(
     target_language: str | None,
     volume_size: int | None,
     translator: Translator | None,
+    title: str | None = None,
+    author: str | None = None,
+    original_filename: str | None = None,
+    split_mode: str = "auto",
     on_status: StatusCallback | None = None,
     on_epub_progress: ProgressCallback | None = None,
     on_translate_progress: ProgressCallback | None = None,
@@ -148,7 +264,13 @@ async def run_pdf_pipeline(
     """
     if not pdf_path.is_file():
         raise PdfImportError(f"el PDF no existe: {pdf_path}")
+    if split_mode not in _VALID_SPLIT_MODES:
+        raise PdfImportError(
+            f"modo de capitulos no soportado: {split_mode} "
+            f"(disponibles: {', '.join(_VALID_SPLIT_MODES)})"
+        )
 
+    source_sha256 = _sha256(pdf_path)
     workdir = pdf_path.parent / "work"
     if on_status:
         on_status("Convirtiendo PDF a EPUB y DOCX")
@@ -156,13 +278,17 @@ async def run_pdf_pipeline(
         convert_pdf,
         pdf_path,
         workdir,
+        title=title,
+        author=author,
         language=source_language,
+        split_mode=split_mode,
+        original_filename=original_filename or pdf_path.name,
         on_status=on_status,
     )
     if not converted.chapters:
         raise PdfImportError("no se extrajeron capitulos del PDF")
 
-    slug = slugify(converted.title)
+    slug = unique_slug(slugify(converted.title), output_dir, sha256=source_sha256)
     slug_dir = output_dir / slug
     slug_dir.mkdir(parents=True, exist_ok=True)
 
@@ -184,6 +310,9 @@ async def run_pdf_pipeline(
         author=converted.author,
         source_url="",
         source_pdf=source_name,
+        source_filename=original_filename or pdf_path.name,
+        source_pdf_sha256=source_sha256,
+        pdf_kind=converted.split_mode,
         language_code=source_language,
         cover_path=cover_path,
         volume_size=volume_size,

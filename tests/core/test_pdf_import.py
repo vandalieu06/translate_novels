@@ -12,10 +12,12 @@ from novel_cli.core.services.pdf_import import (
     PdfImport,
     PdfImportError,
     convert_pdf,
+    resolve_pdf_metadata,
     run_pdf_pipeline,
     save_chapters,
 )
 from novel_cli.core.services.pipeline import rebuild_volumes
+from novel_cli.core.utils.names import unique_slug
 
 
 class FakeTranslator:
@@ -29,7 +31,9 @@ class FakeTranslator:
         return "\n".join(f"ES:{line}" for line in text.split("\n"))
 
 
-def make_import(tmp_path: Path, *, title: str = "Sample Novel") -> PdfImport:
+def make_import(
+    tmp_path: Path, *, title: str = "Sample Novel", split_mode: str = "auto"
+) -> PdfImport:
     workdir = tmp_path / "work"
     workdir.mkdir(parents=True, exist_ok=True)
     epub = workdir / f"{title}.epub"
@@ -46,6 +50,7 @@ def make_import(tmp_path: Path, *, title: str = "Sample Novel") -> PdfImport:
         epub_path=epub,
         cover_path=None,
         docx_path=workdir / "sample.docx",
+        split_mode=split_mode,
     )
 
 
@@ -87,10 +92,15 @@ def test_convert_pdf_maps_chapters(tmp_path: Path, monkeypatch) -> None:
     )
     monkeypatch.setattr(
         "novel_cli.core.services.pdf_import.extract_docx_chapters",
-        lambda path, *, fallback_title="Book": [FakeChapter()],
+        lambda path, *, fallback_title="Book", mode="auto": [FakeChapter()],
     )
 
-    result = convert_pdf(tmp_path / "in.pdf", tmp_path / "work")
+    result = convert_pdf(
+        tmp_path / "in.pdf",
+        tmp_path / "work",
+        title="Sample Novel",
+        author="Author",
+    )
     assert result.title == "Sample Novel"
     assert result.author == "Author"
     assert result.language == "en"
@@ -267,3 +277,109 @@ def test_rebuild_volumes_pdf_preserves_original(tmp_path: Path) -> None:
     ]
     assert (slug_dir / "Sample Novel 1-2 (ES).epub").exists()
     assert manifest.volume_size == 2
+
+def test_resolve_pdf_metadata_falls_back_to_filename(tmp_path: Path) -> None:
+    pdf = tmp_path / "mi-novela.pdf"
+    resolved = resolve_pdf_metadata(
+        pdf, metadata_title="", metadata_author="<unknown>"
+    )
+    assert resolved.title == "mi-novela"
+    assert resolved.author is None
+
+
+def test_resolve_pdf_metadata_user_wins(tmp_path: Path) -> None:
+    pdf = tmp_path / "mi-novela.pdf"
+    resolved = resolve_pdf_metadata(
+        pdf,
+        title="Mi Novela",
+        author="Autora",
+        metadata_title="Otro título",
+        metadata_author="Otro autor",
+    )
+    assert resolved.title == "Mi Novela"
+    assert resolved.author == "Autora"
+
+
+def test_resolve_pdf_metadata_ignores_placeholders(tmp_path: Path) -> None:
+    pdf = tmp_path / "mi-novela.pdf"
+    resolved = resolve_pdf_metadata(
+        pdf,
+        metadata_title="Microsoft Word - documento1",
+        metadata_author="Microsoft® Word 2016",
+    )
+    assert resolved.title == "mi-novela"
+    assert resolved.author is None
+
+
+def test_unique_slug_reuses_same_pdf(tmp_path: Path) -> None:
+    slug_dir = tmp_path / "novela"
+    slug_dir.mkdir()
+    Manifest(
+        slug="novela", title="Novela", source_pdf_sha256="abc"
+    ).save(slug_dir)
+    assert unique_slug("novela", tmp_path, sha256="abc") == "novela"
+
+
+def test_unique_slug_suffixes_different_pdf(tmp_path: Path) -> None:
+    slug_dir = tmp_path / "novela"
+    slug_dir.mkdir()
+    Manifest(
+        slug="novela", title="Novela", source_pdf_sha256="abc"
+    ).save(slug_dir)
+    assert unique_slug("novela", tmp_path, sha256="def") == "novela-2"
+
+
+@pytest.mark.asyncio
+async def test_run_pdf_pipeline_passes_metadata_and_kind(
+    tmp_path: Path, monkeypatch
+) -> None:
+    captured: dict[str, object] = {}
+    fake = make_import(tmp_path, split_mode="webnovel")
+
+    def fake_convert(pdf_path: Path, workdir: Path, **kw: object) -> PdfImport:
+        captured.update(kw)
+        return fake
+
+    monkeypatch.setattr(
+        "novel_cli.core.services.pdf_import.convert_pdf", fake_convert
+    )
+    pdf_file = tmp_path / "mi-novela.pdf"
+    pdf_file.write_bytes(b"%PDF-fake")
+
+    manifest = await run_pdf_pipeline(
+        pdf_path=pdf_file,
+        output_dir=tmp_path,
+        source_language="en",
+        translate=False,
+        target_language=None,
+        volume_size=None,
+        translator=None,
+        title="Mi Novela",
+        author="Autora",
+        original_filename="mi-novela.pdf",
+        split_mode="webnovel",
+    )
+
+    assert captured["title"] == "Mi Novela"
+    assert captured["author"] == "Autora"
+    assert captured["split_mode"] == "webnovel"
+    assert manifest.source_filename == "mi-novela.pdf"
+    assert manifest.source_pdf_sha256
+    assert manifest.pdf_kind == "webnovel"
+
+
+@pytest.mark.asyncio
+async def test_run_pdf_pipeline_rejects_invalid_kind(tmp_path: Path) -> None:
+    pdf_file = tmp_path / "source.pdf"
+    pdf_file.write_bytes(b"%PDF-fake")
+    with pytest.raises(PdfImportError):
+        await run_pdf_pipeline(
+            pdf_path=pdf_file,
+            output_dir=tmp_path,
+            source_language="en",
+            translate=False,
+            target_language=None,
+            volume_size=None,
+            translator=None,
+            split_mode="foo",
+        )
