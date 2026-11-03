@@ -15,4 +15,5 @@
 | 2026-10-17 | 11 | El Sync de la web hace siempre el peek del TOC (detecta novedades con caché fresca) | `2aec2f6` |
 | 2026-11-03 | 12 | PDF sin metadatos: fallback a nombre de archivo, overrides de título/autor y slugs únicos | `3bd373f` |
 | 2026-11-03 | 13 | PDF: modo libro/webnovel (`--kind`) y paso del modo al troceado de capítulos | `3bd373f` |
+| 2026-11-03 | 14 | Inferir título/autor del contenido del PDF cuando faltan metadatos o el nombre es UUID | — |
 | 2026-11-03 | 15 | Upload de PDF: campo `original_filename` para clientes que suben una copia con nombre UUID | `3bd373f` |

@@ -297,7 +297,7 @@ async function submitPdfJob(event) {
   body.append("kind", $("#pdf-kind")?.value || "auto");
   body.append("volume_size", parseInt($("#pdf-volume").value, 10) || 50);
   const title = $("#pdf-title")?.value.trim();
-  if (title) body.append("title", title);
+  if (title && !isUuidLike(title)) body.append("title", title);
   const author = $("#pdf-author")?.value.trim();
   if (author) body.append("author", author);
   if ($("#pdf-translate").checked) {

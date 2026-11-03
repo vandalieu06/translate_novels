@@ -82,10 +82,12 @@ novel-cli pdf "light-novel.pdf" --kind book
 novel-cli pdf "webnovel.pdf" --kind webnovel
 ```
 
-Si el PDF no trae título, se usa el **nombre del archivo** (sin `.pdf`); `--title` y
-`--author` tienen prioridad sobre los metadatos. `--kind auto` (default) detecta webnovel
-cuando hay muchos capítulos y book cuando hay pocos; `book` recupera títulos renderizados
-como imagen y `webnovel` descarta capítulos vacíos y líneas de TOC duplicadas.
+Si el PDF no trae título, se intenta **inferir del contenido** (portada, cabecera repetida
+o título entre comillas); si no hay señal fiable, se usa el **nombre del archivo** (sin
+`.pdf`). `--title` y `--author` tienen prioridad sobre todo. `--kind auto` (default)
+detecta webnovel cuando hay muchos capítulos y book cuando hay pocos; `book` recupera
+títulos renderizados como imagen y `webnovel` descarta capítulos vacíos y líneas de TOC
+duplicadas.
 
 ## Estructura de salida
 

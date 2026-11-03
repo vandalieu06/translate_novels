@@ -145,7 +145,9 @@ function setupPdfForm() {
     fileInput.addEventListener("change", () => {
       const file = fileInput.files[0];
       if (!file || titleInput.value.trim()) return;
-      titleInput.value = file.name.replace(/\.pdf$/i, "");
+      const stem = file.name.replace(/\.pdf$/i, "");
+      if (isUuidLike(stem)) return;
+      titleInput.value = stem;
     });
   }
   const sourceLangs = (state.config && state.config.source_languages) || {};

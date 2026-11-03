@@ -285,10 +285,14 @@ editable desde `../pdf-to-epub`):
   `keep_intermediate=True` (CPU intensivo; en la web se ejecuta en `asyncio.to_thread`) y a
   `extract_docx_chapters(docx_path, mode=split_mode)` → mapea `TextChapter` a `Chapter`
   (párrafos planos).
-- `resolve_pdf_metadata(...)`: prioridad **override del usuario > metadato válido > nombre
-  del archivo**. Sanea placeholders (`<unknown>`, `Microsoft Word - …`, `untitled`, …);
+- `resolve_pdf_metadata(...)`: prioridad **override del usuario > metadato válido >
+  inferido del PDF > nombre de archivo legible > “Novela sin título”**. Sanea placeholders
+  (`<unknown>`, `Microsoft Word - …`, `python-docx`, `calibre`, `untitled`, UUIDs, …);
   `convert_pdf` pasa el título/autor resueltos a `ConversionOptions` para que el EPUB
   original y el manifest usen el mismo valor.
+- `infer_pdf_metadata(pdf_path)`: best-effort desde el contenido cuando faltan metadatos:
+  título entre comillas tras “novela ligera”/“light novel”, portada con tipografía grande,
+  cabecera repetida en las primeras páginas y autor tras “escrita por …”/“Autor: …”.
 - `run_pdf_pipeline(..., title, author, original_filename, split_mode)`: genera el **EPUB
   original** (el de pdf-to-epub, formato rico), guarda `source.pdf` + portada, escribe
   `raw/<NNNN>.md` y, si `target != source`, traduce (`translate_chapters(source=...)`) y

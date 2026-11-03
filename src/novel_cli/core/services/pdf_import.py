@@ -11,14 +11,20 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import logging
+import re
+import statistics
+from collections import Counter
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
+import pymupdf
 from pdf_to_epub.core.config import ConversionOptions
+from pdf_to_epub.core.epub.split import chapter_title
 from pdf_to_epub.core.export import extract_docx_chapters
 from pdf_to_epub.core.pdf.inspect import read_metadata
 from pdf_to_epub.core.pipeline import run as pdf_to_epub_run
+from pdf_to_epub.core.text import is_page_number
 
 from novel_cli.core import config
 from novel_cli.core.models.novel import Chapter, NovelMetadata
@@ -57,8 +63,42 @@ _INVALID_METADATA = {
     "null",
 }
 _INVALID_METADATA_PREFIXES = ("microsoft word", "microsoft® word")
+_INVALID_AUTHOR_PREFIXES = (
+    "python-docx",
+    "pymupdf",
+    "pdf2docx",
+    "calibre",
+    "adobe",
+)
 _INVALID_METADATA_SUFFIXES = (".pdf", ".docx", ".doc")
 _VALID_SPLIT_MODES = ("auto", "book", "webnovel")
+
+_UUID_RE = re.compile(
+    r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+    re.IGNORECASE,
+)
+_QUOTED_TITLE_RE = re.compile(
+    r"(?:novela\s+ligera|light\s+novel|novela|obra|volumen)"
+    r"[^“\"'«]{0,80}[“\"'«]([^”\"'»]{3,140})[”\"'»]",
+    re.IGNORECASE,
+)
+_AUTHOR_RE = re.compile(
+    r"(?:escrita|escrito|escrit[oa]s?)\s+por\s+"
+    r"([A-ZÁÉÍÓÚÜÑ][^.;]{2,80}?)(?=\s+e\s+ilustrad|\s*[,.;]|$)",
+    re.IGNORECASE,
+)
+_AUTHOR_LABEL_RE = re.compile(
+    r"(?:autor|author)\s*[:：]\s*([^\n]{2,80})", re.IGNORECASE
+)
+_GENERIC_HEADER_RE = re.compile(
+    r"(?:p[áa]gina|page|traducci[óo]n sin fines|todos los derechos|"
+    r"copyright|pertenecen a sus respectivos)",
+    re.IGNORECASE,
+)
+_INFER_PAGES = 12
+_TITLE_PAGE_MIN_SIZE = 16.0
+_TITLE_PAGE_RATIO = 1.6
+_RUNNING_HEADER_MIN_RATIO = 0.25
 
 
 class PdfImportError(Exception):
@@ -71,6 +111,14 @@ class ResolvedPdfMetadata:
 
     title: str
     author: str | None
+
+
+@dataclass
+class InferredPdfMetadata:
+    """Titulo/autor inferidos del contenido del PDF (best effort)."""
+
+    title: str | None = None
+    author: str | None = None
 
 
 @dataclass
@@ -87,21 +135,146 @@ class PdfImport:
     split_mode: str = "auto"
 
 
-def _clean_metadata_value(value: str | None) -> str | None:
+def _is_uuid_like(value: str) -> bool:
+    """Return True for UUID-shaped strings (upload cache names)."""
+    return bool(_UUID_RE.match(value.strip()))
+
+
+def _clean_metadata_value(value: str | None, *, kind: str = "title") -> str | None:
     """Return a usable metadata value, or None for empty/placeholder values."""
     if value is None:
         return None
     text = " ".join(value.split()).strip()
-    if not text:
+    if not text or _is_uuid_like(text):
         return None
     lowered = text.casefold()
     if lowered in _INVALID_METADATA:
         return None
     if lowered.startswith(_INVALID_METADATA_PREFIXES):
         return None
+    if kind == "author" and lowered.startswith(_INVALID_AUTHOR_PREFIXES):
+        return None
     if lowered.endswith(_INVALID_METADATA_SUFFIXES):
         return None
     return text
+
+
+def _normalized_page_text(doc: pymupdf.Document, pages: int = _INFER_PAGES) -> str:
+    parts: list[str] = []
+    for index in range(min(pages, doc.page_count)):
+        parts.append(" ".join(doc[index].get_text().split()))
+    return " ".join(parts)
+
+
+def _infer_quoted_title(text: str) -> str | None:
+    match = _QUOTED_TITLE_RE.search(text)
+    if match is None:
+        return None
+    return _clean_metadata_value(match.group(1))
+
+
+def _infer_title_page(doc: pymupdf.Document) -> str | None:
+    """Use the largest text on the first pages when it stands out from the body."""
+    candidates: list[tuple[float, str]] = []
+    for page_index in range(min(_INFER_PAGES, doc.page_count)):
+        page = doc[page_index]
+        height = page.rect.height
+        lines: list[tuple[float, str, float]] = []
+        for block in page.get_text("dict")["blocks"]:
+            if block.get("type") != 0:
+                continue
+            for line in block.get("lines", []):
+                text = " ".join(
+                    span["text"] for span in line["spans"]
+                ).strip()
+                text = " ".join(text.split())
+                if not text:
+                    continue
+                y0 = line["bbox"][1]
+                if y0 < height * 0.08 or y0 > height * 0.92:
+                    continue
+                if is_page_number(text) or chapter_title(text) is not None:
+                    continue
+                size = max(span["size"] for span in line["spans"])
+                lines.append((size, text, y0))
+        if not lines or len(lines) > 12:
+            continue
+        sizes = [size for size, _text, _y0 in lines]
+        median = statistics.median(sizes)
+        max_size = max(sizes)
+        if max_size < _TITLE_PAGE_MIN_SIZE or max_size < median * _TITLE_PAGE_RATIO:
+            continue
+        top_lines = sorted(
+            (line for line in lines if abs(line[0] - max_size) < 0.5),
+            key=lambda line: line[2],
+        )
+        parts: list[str] = []
+        for _size, text, _y0 in top_lines[:3]:
+            if re.match(r"(?i)^(por|by|autor|author)\b", text):
+                break
+            parts.append(text)
+        title = _clean_metadata_value(" ".join(parts))
+        if title is not None and 3 <= len(title) <= 140:
+            candidates.append((max_size, title))
+    if not candidates:
+        return None
+    return max(candidates, key=lambda candidate: candidate[0])[1]
+
+
+def _infer_running_header(doc: pymupdf.Document) -> str | None:
+    """Use a line repeated in the top band across the first pages."""
+    counts: Counter[str] = Counter()
+    sampled = 0
+    for page_index in range(min(_INFER_PAGES, doc.page_count)):
+        page = doc[page_index]
+        height = page.rect.height
+        sampled += 1
+        seen: set[str] = set()
+        for block in page.get_text("blocks"):
+            _x0, y0, _x1, _y1, raw_text, _block_no, block_type = block
+            if block_type != 0 or y0 > height * 0.12:
+                continue
+            text = " ".join(raw_text.split())
+            if not text or len(text) < 3 or len(text) > 140:
+                continue
+            if is_page_number(text) or _GENERIC_HEADER_RE.search(text):
+                continue
+            if chapter_title(text) is not None or text in seen:
+                continue
+            seen.add(text)
+            counts[text] += 1
+    if not counts:
+        return None
+    text, count = counts.most_common(1)[0]
+    if count < max(2, int(sampled * _RUNNING_HEADER_MIN_RATIO)):
+        return None
+    return _clean_metadata_value(text)
+
+
+def _infer_author(text: str) -> str | None:
+    for pattern in (_AUTHOR_RE, _AUTHOR_LABEL_RE):
+        match = pattern.search(text)
+        if match is None:
+            continue
+        author = _clean_metadata_value(match.group(1), kind="author")
+        if author is not None:
+            return author
+    return None
+
+
+def infer_pdf_metadata(pdf_path: Path) -> InferredPdfMetadata:
+    """Infer title/author from the PDF content; never raise."""
+    try:
+        with pymupdf.open(str(pdf_path)) as doc:
+            text = _normalized_page_text(doc)
+            title = _infer_quoted_title(text)
+            if title is None:
+                title = _infer_title_page(doc)
+            if title is None:
+                title = _infer_running_header(doc)
+            return InferredPdfMetadata(title=title, author=_infer_author(text))
+    except Exception:  # noqa: BLE001 - best effort; conversion can continue
+        return InferredPdfMetadata()
 
 
 def resolve_pdf_metadata(
@@ -111,19 +284,25 @@ def resolve_pdf_metadata(
     author: str | None = None,
     metadata_title: str | None = None,
     metadata_author: str | None = None,
+    inferred_title: str | None = None,
+    inferred_author: str | None = None,
 ) -> ResolvedPdfMetadata:
-    """Resolve title/author: user override > valid metadata > file name."""
+    """Resolve title/author: user > metadata > inferred > readable filename."""
     resolved_title = _clean_metadata_value(title)
     if resolved_title is None:
         resolved_title = _clean_metadata_value(metadata_title)
+    if resolved_title is None:
+        resolved_title = _clean_metadata_value(inferred_title)
     if resolved_title is None:
         resolved_title = _clean_metadata_value(pdf_path.stem)
     if resolved_title is None:
         resolved_title = "Novela sin título"
 
-    resolved_author = _clean_metadata_value(author)
+    resolved_author = _clean_metadata_value(author, kind="author")
     if resolved_author is None:
-        resolved_author = _clean_metadata_value(metadata_author)
+        resolved_author = _clean_metadata_value(metadata_author, kind="author")
+    if resolved_author is None:
+        resolved_author = _clean_metadata_value(inferred_author, kind="author")
     return ResolvedPdfMetadata(title=resolved_title, author=resolved_author)
 
 
@@ -166,12 +345,28 @@ def convert_pdf(
     except Exception:  # noqa: BLE001 - pdf-to-epub volvera a leerlo
         metadata_title = None
         metadata_author = None
+
+    needs_title = (
+        _clean_metadata_value(title) is None
+        and _clean_metadata_value(metadata_title) is None
+    )
+    needs_author = (
+        _clean_metadata_value(author, kind="author") is None
+        and _clean_metadata_value(metadata_author, kind="author") is None
+    )
+    inferred = (
+        infer_pdf_metadata(pdf_path)
+        if (needs_title or needs_author)
+        else InferredPdfMetadata()
+    )
     resolved = resolve_pdf_metadata(
         Path(original_filename) if original_filename else pdf_path,
         title=title,
         author=author,
         metadata_title=metadata_title,
         metadata_author=metadata_author,
+        inferred_title=inferred.title,
+        inferred_author=inferred.author,
     )
 
     workdir.mkdir(parents=True, exist_ok=True)

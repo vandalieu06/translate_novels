@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pymupdf
 import pytest
 
 from novel_cli.core.models.novel import Chapter
@@ -12,6 +13,7 @@ from novel_cli.core.services.pdf_import import (
     PdfImport,
     PdfImportError,
     convert_pdf,
+    infer_pdf_metadata,
     resolve_pdf_metadata,
     run_pdf_pipeline,
     save_chapters,
@@ -383,3 +385,94 @@ async def test_run_pdf_pipeline_rejects_invalid_kind(tmp_path: Path) -> None:
             translator=None,
             split_mode="foo",
         )
+
+
+def _pdf_with_text(path: Path, text: str) -> Path:
+    doc = pymupdf.open()
+    page = doc.new_page()
+    page.insert_textbox(pymupdf.Rect(72, 72, 540, 700), text, fontsize=12)
+    doc.save(str(path))
+    doc.close()
+    return path
+
+
+def test_infer_pdf_metadata_quoted_title_and_author(tmp_path: Path) -> None:
+    text = (
+        "Esta es una traducción del volumen original de la novela ligera "
+        '"Kunon the Sorcerer Can See: Volumen 1", escrita por Umikaze '
+        "Minamino e ilustrada por Laruha."
+    )
+    pdf = _pdf_with_text(tmp_path / "kunon.pdf", text)
+
+    inferred = infer_pdf_metadata(pdf)
+
+    assert inferred.title == "Kunon the Sorcerer Can See: Volumen 1"
+    assert inferred.author == "Umikaze Minamino"
+
+
+def test_infer_pdf_metadata_title_page(tmp_path: Path) -> None:
+    doc = pymupdf.open()
+    page = doc.new_page()
+    page.insert_textbox(
+        pymupdf.Rect(72, 120, 540, 300),
+        "Haruya Akasaki Y Las bellezas de clase S",
+        fontsize=36,
+    )
+    for index in range(3):
+        page.insert_text((72, 400 + index * 18), f"Línea de cuerpo {index}", fontsize=12)
+    path = tmp_path / "title.pdf"
+    doc.save(str(path))
+    doc.close()
+
+    inferred = infer_pdf_metadata(path)
+
+    assert inferred.title == "Haruya Akasaki Y Las bellezas de clase S"
+
+
+def test_infer_pdf_metadata_running_header(tmp_path: Path) -> None:
+    header = "Naze ka s-kyuu bijo-tachi no Wadai ni Ore ga Agaru ken"
+    doc = pymupdf.open()
+    for index in range(4):
+        page = doc.new_page()
+        page.insert_text((72, 40), header, fontsize=14)
+        for line in range(3):
+            page.insert_text((72, 120 + line * 18), f"Body {index}-{line}", fontsize=12)
+    path = tmp_path / "header.pdf"
+    doc.save(str(path))
+    doc.close()
+
+    inferred = infer_pdf_metadata(path)
+
+    assert inferred.title == header
+
+
+def test_infer_pdf_metadata_without_signals(tmp_path: Path) -> None:
+    pdf = _pdf_with_text(tmp_path / "plain.pdf", "Solo texto de cuerpo sin señales.")
+    inferred = infer_pdf_metadata(pdf)
+    assert inferred.title is None
+    assert inferred.author is None
+
+
+def test_resolve_pdf_metadata_uses_inferred_over_uuid() -> None:
+    pdf = Path("21032367-6958-4cb8-aff8-e168451fe61d.pdf")
+    resolved = resolve_pdf_metadata(
+        pdf,
+        metadata_title="",
+        metadata_author="python-docx",
+        inferred_title="Kunon the Sorcerer Can See: Volumen 1",
+        inferred_author="Umikaze Minamino",
+    )
+    assert resolved.title == "Kunon the Sorcerer Can See: Volumen 1"
+    assert resolved.author == "Umikaze Minamino"
+
+
+def test_resolve_pdf_metadata_ignores_uuid_without_inference() -> None:
+    pdf = Path("21032367-6958-4cb8-aff8-e168451fe61d.pdf")
+    resolved = resolve_pdf_metadata(pdf, metadata_title="")
+    assert resolved.title == "Novela sin título"
+
+
+def test_resolve_pdf_metadata_rejects_generator_author() -> None:
+    pdf = Path("libro.pdf")
+    resolved = resolve_pdf_metadata(pdf, metadata_author="python-docx")
+    assert resolved.author is None

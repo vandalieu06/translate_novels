@@ -46,11 +46,13 @@
   si `target != source` genera el EPUB traducido además del original. Nunca `auto` como origen.
 - **`Manifest.source_pdf`**: distingue novelas PDF de web; `rebuild_volumes`/`volume-size`
   regeneran **solo el EPUB traducido** y conservan intacto el original rico.
-- **Metadatos con fallback**: si el PDF no trae título se usa el nombre del archivo;
-  `--title`/`--author` (CLI) y los campos equivalentes de la web mandan sobre los metadatos.
-  Se sanean placeholders (`<unknown>`, `Microsoft Word - …`, `untitled`). El manifest guarda
-  `source_filename`, `source_pdf_sha256` y `pdf_kind`, y evita pisar otra novela con el mismo
-  título (`-2`, `-3`).
+- **Metadatos con fallback**: si el PDF no trae título se intenta inferir del contenido
+  (título entre comillas, portada con tipografía grande o cabecera repetida); si no, se usa
+  el nombre del archivo. `--title`/`--author` (CLI) y los campos equivalentes de la web
+  mandan sobre los metadatos. Se sanean placeholders (`<unknown>`, `Microsoft Word - …`,
+  `python-docx`, `calibre`, `untitled`, UUIDs). El manifest guarda `source_filename`,
+  `source_pdf_sha256` y `pdf_kind`, y evita pisar otra novela con el mismo título
+  (`-2`, `-3`).
 - **Tipo de PDF** (`--kind auto|book|webnovel`): `book` recupera capítulos con títulos en
   imagen; `webnovel` descarta capítulos vacíos y líneas de TOC duplicadas.
 - **Límite de subida** para la web: `NOVEL_UPLOAD_MAX_MB` (default 100).
