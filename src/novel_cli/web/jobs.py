@@ -41,9 +41,18 @@ EventCallback = Callable[[dict[str, Any]], None]
 
 JOB_PENDING = "pending"
 JOB_RUNNING = "running"
+JOB_CANCELLING = "cancelling"
 JOB_DONE = "done"
 JOB_ERROR = "error"
 JOB_CANCELLED = "cancelled"
+
+
+class JobAlreadyRunning(Exception):
+    """Ya hay un job activo para la misma novela (URL normalizada)."""
+
+    def __init__(self, job_id: str):
+        self.job_id = job_id
+        super().__init__(f"ya hay un job para esta novela: {job_id}")
 
 
 @dataclass
@@ -56,6 +65,7 @@ class Job:
     state: str = JOB_PENDING
     error: str | None = None
     slug: str | None = None
+    key: str | None = None
     result: dict[str, Any] | None = None
     task: asyncio.Task[Any] | None = None
     events: list[dict[str, Any]] = field(default_factory=list)
@@ -89,6 +99,15 @@ class JobManager:
     def __init__(self, default_output_dir: Path):
         self.default_output_dir = default_output_dir
         self._jobs: dict[str, Job] = {}
+        self._active: dict[str, str] = {}
+
+    @staticmethod
+    def _job_key(url: str, options: dict[str, Any]) -> str:
+        """Clave del lock: slug si se conoce, si no URL normalizada."""
+        slug = options.get("slug")
+        if isinstance(slug, str) and slug:
+            return f"slug:{slug}"
+        return f"url:{url.rstrip('/')}"
 
     def list(self) -> list[Job]:
         return [self._jobs[key] for key in sorted(self._jobs, reverse=True)]
@@ -96,14 +115,39 @@ class JobManager:
     def get(self, job_id: str) -> Job | None:
         return self._jobs.get(job_id)
 
+    def _release(self, job: Job) -> None:
+        if job.state == JOB_CANCELLING:
+            # El task pudo cancelarse antes de entrar en _run_web.
+            job.state = JOB_CANCELLED
+        if job.key is not None and self._active.get(job.key) == job.id:
+            self._active.pop(job.key, None)
+
     def create(self, *, url: str, output_dir: Path | None, options: dict[str, Any]) -> Job:
+        key = self._job_key(url, options)
+        active_id = self._active.get(key)
+        if active_id is not None:
+            active = self._jobs.get(active_id)
+            if active is not None and active.state in (
+                JOB_PENDING,
+                JOB_RUNNING,
+                JOB_CANCELLING,
+            ):
+                raise JobAlreadyRunning(active_id)
+            self._active.pop(key, None)
         job = Job(
             id=uuid.uuid4().hex[:12],
             url=url,
             output_dir=output_dir or self.default_output_dir,
+            key=key,
         )
         self._jobs[job.id] = job
-        task = asyncio.create_task(self._run(job, options))
+        self._active[key] = job.id
+        try:
+            task = asyncio.create_task(self._run(job, options))
+        except Exception:
+            self._active.pop(key, None)
+            raise
+        task.add_done_callback(lambda _task: self._release(job))
         job.task = task
         return job
 
@@ -144,6 +188,10 @@ class JobManager:
         job = self._jobs.get(job_id)
         if job is None or job.task is None or job.task.done():
             return False
+        if job.state in (JOB_DONE, JOB_ERROR, JOB_CANCELLED):
+            return False
+        job.state = JOB_CANCELLING
+        job.status("cancelling", "Cancelando…")
         job.task.cancel()
         return True
 

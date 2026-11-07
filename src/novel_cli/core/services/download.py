@@ -55,16 +55,22 @@ async def download_chapters(
     pacer: Pacer | None = None,
     empty_retries: int = EMPTY_RETRIES,
     on_progress: ProgressCallback | None = None,
+    total_chapters: int | None = None,
 ) -> list[Chapter]:
     """Descarga los capitulos que faltan (o todos con force) a raw/<NNNN>.md.
 
     Un capitulo con 0 parrafos tras el parse se considera vacio: se reintenta
     al final del lote con backoff y, si persiste, se deja pendiente (se reporta
     y no cuenta como descargado). El job no falla por capitulos vacios.
+
+    ``total_chapters`` es el tamano del TOC completo (no el del lote); si no se
+    pasa, se conserva el comportamiento historico de usar ``len(chapters)``.
     """
     raw_dir = slug_dir / "raw"
     raw_dir.mkdir(parents=True, exist_ok=True)
-    manifest.chapters_total = len(chapters)
+    manifest.chapters_total = (
+        len(chapters) if total_chapters is None else total_chapters
+    )
 
     existing_nums = {
         int(path.stem)
@@ -109,13 +115,11 @@ async def download_chapters(
         done += 1
         if on_progress:
             on_progress(done, total)
+        if not is_chapter_empty(paragraphs):
+            # Guardado incremental: un cancel a mitad conserva lo ya bajado.
+            save_chapter(raw_dir, chapter, paragraphs)
+            completed.append(chapter)
         return chapter, paragraphs
-
-    async def save(chapter: Chapter, paragraphs: list[str]) -> None:
-        raw_dir.joinpath(chapter_filename(chapter.num)).write_text(
-            format_chapter(chapter, paragraphs), encoding="utf-8"
-        )
-        completed.append(chapter)
 
     results = await asyncio.gather(*(fetch_one(ch) for ch in missing))
     empty: list[tuple[Chapter, list[str]]] = []
@@ -126,8 +130,6 @@ async def download_chapters(
         if is_chapter_empty(paragraphs):
             logger.warning("capitulo %d vacio; se reintentara al final", chapter.num)
             empty.append((chapter, paragraphs))
-        else:
-            await save(chapter, paragraphs)
 
     # Reintenta los vacios al final, secuencial, con backoff.
     still_empty: list[tuple[Chapter, list[str]]] = []
@@ -143,7 +145,8 @@ async def download_chapters(
                 break
             paragraphs = adapter.parse_chapter(html, chapter.url)
             if not is_chapter_empty(paragraphs):
-                await save(chapter, paragraphs)
+                save_chapter(raw_dir, chapter, paragraphs)
+                completed.append(chapter)
                 resolved = True
                 break
             if attempt < len(EMPTY_RETRY_BACKOFF):
@@ -194,6 +197,14 @@ def load_chapter(path: Path, num: int, url: str) -> Chapter:
         text = rest
     paragraphs = [p.strip() for p in text.split("\n\n") if p.strip()]
     return Chapter(num=num, title=title, url=url, paragraphs=paragraphs)
+
+
+def save_chapter(raw_dir: Path, chapter: Chapter, paragraphs: list[str]) -> None:
+    """Escribe ``raw/NNNN.md`` de forma atomica (tmp + replace)."""
+    path = raw_dir / chapter_filename(chapter.num)
+    tmp = path.with_name(path.name + ".tmp")
+    tmp.write_text(format_chapter(chapter, paragraphs), encoding="utf-8")
+    tmp.replace(path)
 
 
 def format_chapter(chapter: Chapter, paragraphs: list[str]) -> str:

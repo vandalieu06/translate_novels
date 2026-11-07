@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import ClassVar
 
 from pydantic import BaseModel, ConfigDict
 
@@ -26,7 +27,8 @@ class TocCache(BaseModel):
 
     model_config = ConfigDict(extra="ignore")
 
-    version: int = 1
+    CURRENT_VERSION: ClassVar[int] = 2
+    version: int = CURRENT_VERSION
     source_url: str
     fetched_at: str
     listing_pages: list[str] = []
@@ -59,8 +61,11 @@ class TocCache(BaseModel):
         if not path.exists():
             return None
         try:
-            return cls.model_validate(json.loads(path.read_text(encoding="utf-8")))
-        except (json.JSONDecodeError, ValueError):
+            data = json.loads(path.read_text(encoding="utf-8"))
+            if int(data.get("version", 1)) < cls.CURRENT_VERSION:
+                return None
+            return cls.model_validate(data)
+        except (json.JSONDecodeError, ValueError, TypeError):
             return None
 
 

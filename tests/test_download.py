@@ -278,6 +278,62 @@ async def test_progress_callback(tmp_path):
     assert [d for d, _ in events] == [1, 2, 3]
 
 
+@pytest.mark.asyncio
+async def test_total_chapters_override(tmp_path):
+    """total_chapters refleja el TOC completo, no el lote descargado."""
+    chapters = make_chapters(3)
+    manifest = make_manifest(tmp_path)
+    await download_chapters(
+        fetcher=FakeFetcher(),
+        adapter=FakeAdapter(),
+        metadata=NovelMetadata(title="Novela"),
+        chapters=chapters,
+        slug_dir=tmp_path,
+        manifest=manifest,
+        pacer=Pacer(0),
+        total_chapters=10,
+    )
+    assert manifest.chapters_total == 10
+    assert manifest.chapters_downloaded == 3
+
+
+@pytest.mark.asyncio
+async def test_cancelled_download_keeps_written_chapters(tmp_path):
+    """Cancelar a mitad conserva los capitulos ya escritos (guardado incremental)."""
+    chapters = make_chapters(4)
+    gate = asyncio.Event()
+
+    class BlockingFetcher(FakeFetcher):
+        async def fetch_html(self, url: str, *, headers: dict | None = None) -> str:
+            if url.endswith("/4"):
+                await gate.wait()
+            return await super().fetch_html(url, headers=headers)
+
+    manifest = make_manifest(tmp_path)
+    task = asyncio.create_task(
+        download_chapters(
+            fetcher=BlockingFetcher(),
+            adapter=FakeAdapter(),
+            metadata=NovelMetadata(title="Novela"),
+            chapters=chapters,
+            slug_dir=tmp_path,
+            manifest=manifest,
+            concurrency=1,
+            pacer=Pacer(0),
+        )
+    )
+    for _ in range(100):
+        if (tmp_path / "raw" / chapter_filename(3)).exists():
+            break
+        await asyncio.sleep(0.01)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    assert (tmp_path / "raw" / chapter_filename(1)).exists()
+    assert (tmp_path / "raw" / chapter_filename(3)).exists()
+    assert not (tmp_path / "raw" / chapter_filename(4)).exists()
+
+
 def test_load_chapter_roundtrip(tmp_path):
     ch = Chapter(
         num=42,

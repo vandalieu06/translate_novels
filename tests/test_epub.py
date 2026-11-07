@@ -6,6 +6,7 @@ import io
 import zipfile
 
 import ebooklib
+import pytest
 from ebooklib import epub
 
 from novel_cli.core.models.novel import Chapter
@@ -241,3 +242,43 @@ def test_generate_volumes_exact_multiple():
 
 def test_generate_volumes_empty():
     assert generate_volumes([], 50) == []
+
+
+def test_generate_volumes_513_chapters():
+    chapters = make_chapters(513)
+    volumes = generate_volumes(chapters, 50)
+    assert len(volumes) == 11
+    assert [(v.start, v.end) for v in volumes] == [
+        (1, 50),
+        (51, 100),
+        (101, 150),
+        (151, 200),
+        (201, 250),
+        (251, 300),
+        (301, 350),
+        (351, 400),
+        (401, 450),
+        (451, 500),
+        (501, 513),
+    ]
+
+
+def test_generate_volumes_rejects_duplicate_nums():
+    chapters = make_chapters(2)
+    chapters.append(Chapter(num=1, title="dup", url="https://example.com/dup"))
+    with pytest.raises(ValueError, match="duplicado"):
+        generate_volumes(chapters, 50)
+
+
+def test_build_epub_rejects_duplicate_nums():
+    chapters = make_chapters(2)
+    chapters.append(Chapter(num=1, title="dup", url="https://example.com/dup"))
+    with pytest.raises(ValueError, match="duplicado"):
+        build_epub(
+            title="Novela",
+            author=None,
+            language="en",
+            identifier="urn:x:1",
+            chapters=chapters,
+            cover_path=None,
+        )

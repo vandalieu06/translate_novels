@@ -11,7 +11,7 @@ from pydantic import BaseModel
 from novel_cli.core import config
 from novel_cli.core.models.state import Manifest
 from novel_cli.core.services.pipeline import PipelineError, rebuild_volumes
-from novel_cli.web.jobs import JobManager
+from novel_cli.web.jobs import Job, JobAlreadyRunning, JobManager
 
 
 class JobRequest(BaseModel):
@@ -43,6 +43,20 @@ def _valid_url(url: str) -> bool:
 
     parts = urlsplit(url)
     return parts.scheme in ("http", "https") and bool(parts.netloc)
+
+
+def _start_job(manager: JobManager, **kwargs: object) -> Job:
+    """Crea un job o responde 409 si ya hay otro activo para la misma novela."""
+    try:
+        return manager.create(**kwargs)
+    except JobAlreadyRunning as exc:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "message": "ya hay un job para esta novela",
+                "job_id": exc.job_id,
+            },
+        ) from exc
 
 
 def build_router(manager: JobManager) -> APIRouter:
@@ -86,7 +100,8 @@ def build_router(manager: JobManager) -> APIRouter:
         output_dir = (
             Path(req.output).expanduser() if req.output else None
         )
-        job = manager.create(
+        job = _start_job(
+            manager,
             url=req.url,
             output_dir=output_dir,
             options=req.model_dump(),
@@ -168,11 +183,15 @@ def build_router(manager: JobManager) -> APIRouter:
         }
 
     @router.post("/jobs/{job_id}/cancel")
-    async def cancel_job(job_id: str) -> dict[str, bool]:
+    async def cancel_job(job_id: str) -> dict[str, object]:
         cancelled = await manager.cancel(job_id)
         if not cancelled:
             raise HTTPException(status_code=404, detail="job no cancelable/no encontrado")
-        return {"cancelled": True}
+        job = manager.get(job_id)
+        return {
+            "cancelled": True,
+            "state": job.state if job is not None else "cancelled",
+        }
 
     @router.get("/novels")
     async def list_novels() -> list[dict[str, object]]:
@@ -235,7 +254,8 @@ def build_router(manager: JobManager) -> APIRouter:
         if not config.is_valid_translate_target(target):
             raise HTTPException(status_code=400, detail="target_language no soportado")
         if manifest.source_pdf:
-            job = manager.create(
+            job = _start_job(
+                manager,
                 url=manifest.title,
                 output_dir=output_dir,
                 options={
@@ -250,7 +270,8 @@ def build_router(manager: JobManager) -> APIRouter:
                 status_code=400, detail="la novela no tiene una source_url valida"
             )
         force = requested is not None and target != current
-        job = manager.create(
+        job = _start_job(
+            manager,
             url=manifest.source_url,
             output_dir=output_dir,
             options={
@@ -319,7 +340,8 @@ def build_router(manager: JobManager) -> APIRouter:
             raise HTTPException(
                 status_code=400, detail="la novela no tiene una source_url valida"
             )
-        job = manager.create(
+        job = _start_job(
+            manager,
             url=manifest.source_url,
             output_dir=output_dir,
             options={

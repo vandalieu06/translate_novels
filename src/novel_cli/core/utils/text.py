@@ -23,14 +23,20 @@ def anchor_title(anchor) -> str:
     return clean_text(anchor.text_content())
 
 
+def chapter_num_from_href(href: str) -> int | None:
+    """Numero canonico del capitulo a partir del href (``/chapter-123``)."""
+    match = _HREF_CHAPTER.search(href)
+    return int(match.group(1)) if match else None
+
+
 def guess_chapter_num(text: str, href: str, fallback: int) -> int:
     """Extrae el numero de capitulo del texto o del href; si no, usa fallback."""
     match = _CHAPTER_NUM.search(text)
     if match:
         return int(match.group(1))
-    match = _HREF_CHAPTER.search(href)
-    if match:
-        return int(match.group(1))
+    from_href = chapter_num_from_href(href)
+    if from_href is not None:
+        return from_href
     return fallback
 
 

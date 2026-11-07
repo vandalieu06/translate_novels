@@ -115,6 +115,7 @@ esa variable (p. ej. `library-novels/`). Los logs e historial van a `output/logs
 
 - La fuente de verdad de "ya descargado/traducido" es la **existencia del archivo** en disco (`raw/<NNNN>.md`, `translated/<NNNN>.md`); el `.manifest.json` es el índice.
 - Con `--resume` (default) se saltan las fases ya completadas y los EPUB que ya existen no se reescriben.
+- El progreso usa `chapters_total` (tamaño del **TOC**) y `chapters_downloaded` (capítulos con contenido): al descargar por tomos es normal ver `50/513`, `100/513`, … hasta completar la novela.
 - Con `--force` se re-descarga y re-traduce todo desde cero.
 - Con `--no-resume` no se consulta el manifest, pero la existencia de archivos sigue evitando re-descargas.
 - **Capítulos vacíos**: si el parser devuelve 0 párrafos para un capítulo (página sin contenido parseable), se **reintenta** al final del lote. Si persiste, queda en "pendientes de reintento": se muestra un **aviso** (`AVISO: N capítulo(s) vacío(s) pendientes de reintento`) en el CLI y en la web, y el capítulo **no** cuenta como descargado. Un archivo vacío no cuenta como "ya descargado", así que re-ejecutar el mismo comando lo reintenta automáticamente.
@@ -458,6 +459,6 @@ En resumen: solo tienes que permitir el puerto **`8000`** hacia el PC. El resto 
 
 ### Notas
 
-- El servidor mantiene los jobs **en memoria** (un job activo a la vez): debe permanecer lanzado mientras dura una descarga/traducción.
+- El servidor mantiene los jobs **en memoria** (un job por novela a la vez, lock por URL/slug): debe permanecer lanzado mientras dura una descarga/traducción.
 - Se puede proteger con `NOVEL_WEB_TOKEN`; la UI lo pide una vez y lo guarda en `localStorage`.
 - También existe el entry point `novel-cli-web` equivalente a `novel-cli web`.

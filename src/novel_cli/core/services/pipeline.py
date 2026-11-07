@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import functools
 import logging
 from collections.abc import Callable
@@ -192,6 +193,12 @@ async def run_pipeline(
             "no se encontraron capitulos en el TOC. "
             "Puede requerir JS: prueba -p/--playwright, o el sitio bloquea el acceso."
         )
+    duplicates = _duplicate_nums(site.chapters)
+    if duplicates:
+        detail = "; ".join(
+            f"{num}: {', '.join(urls)}" for num, urls in duplicates.items()
+        )
+        raise PipelineError(f"numeros de capitulo duplicados en el TOC: {detail}")
     await _emit(
         notifier,
         NotificationEvent(
@@ -212,6 +219,7 @@ async def run_pipeline(
     manifest = _load_or_create_manifest(
         slug_dir, metadata, slug, volume_size, translate, resume, force
     )
+    manifest.chapters_total = len(site.chapters)
 
     cover_path = slug_dir / manifest.cover_path if manifest.cover_path else None
     if cover_path is None or not cover_path.exists():
@@ -240,6 +248,7 @@ async def run_pipeline(
         concurrency=concurrency,
         pacer=pacer,
         on_progress=on_download_progress,
+        total_chapters=len(site.chapters),
     )
     if manifest.chapters_empty and on_status:
         nums = ", ".join(str(n) for n in manifest.chapters_empty_nums[:20])
@@ -248,7 +257,6 @@ async def run_pipeline(
             f"AVISO: {manifest.chapters_empty} capitulo(s) vacio(s) pendientes "
             f"de reintento: {nums}{extra}"
         )
-    manifest.chapters_total = manifest.chapters_downloaded
     loaded = _load_all_chapters(site.chapters, slug_dir / "raw")
     manifest.save(slug_dir)
     await _emit(
@@ -263,6 +271,7 @@ async def run_pipeline(
             },
         ),
     )
+    await asyncio.sleep(0)  # punto de cancelacion entre fases
 
     if on_status:
         on_status("Generando EPUB original")
@@ -292,6 +301,7 @@ async def run_pipeline(
         ),
     )
     logger.info("EPUB original generado: %d tomo(s)", len(original_names))
+    await asyncio.sleep(0)  # punto de cancelacion entre fases
 
     if translate:
         if translator is None:
@@ -473,10 +483,27 @@ def _load_or_create_manifest(
     )
 
 
+def _duplicate_nums(chapters: list[Chapter]) -> dict[int, list[str]]:
+    """Numeros de capitulo repetidos -> URLs que los comparten."""
+    by_num: dict[int, list[str]] = {}
+    for chapter in chapters:
+        by_num.setdefault(chapter.num, []).append(chapter.url)
+    return {num: urls for num, urls in by_num.items() if len(urls) > 1}
+
+
 def _load_all_chapters(chapters: list[Chapter], chapter_dir: Path) -> list[Chapter]:
     """Carga de disco solo los capitulos que tienen archivo (en orden TOC)."""
     loaded: list[Chapter] = []
+    seen: set[int] = set()
     for chapter in chapters:
+        if chapter.num in seen:
+            logger.warning(
+                "capitulo %d duplicado en el TOC; se ignora %s",
+                chapter.num,
+                chapter.url,
+            )
+            continue
+        seen.add(chapter.num)
         path = chapter_dir / chapter_filename(chapter.num)
         if path.exists():
             loaded.append(load_chapter(path, chapter.num, chapter.url))

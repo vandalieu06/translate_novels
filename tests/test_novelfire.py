@@ -61,6 +61,42 @@ def test_next_page_follows_range_pager(fixture_loader):
     assert adapter.next_page(html, base) == f"{base}?page=2"
 
 
+def test_parse_toc_current_markup_uses_structured_title_and_href(fixture_loader):
+    """Markup 2026: .chapter-no/.chapter-title/<time>, sin atributo title."""
+    adapter = NovelfireAdapter()
+    html = fixture_loader("novelphoenix_toc_2026.html")
+    site = adapter.parse_toc(html, base_url=f"{RANGE_BASE}/chapters")
+    assert [(c.num, c.title) for c in site.chapters] == [
+        (1, "1. Woman's World"),
+        (8, "8. Protagonist Appears"),
+        (26, "Chapter 26.Hypocrite Protaganist"),
+        (88, "Chapter 88.Double Trouble LV (R-18)"),
+        (513, "491. Heroines Unique Exclusive Aura (R-)"),
+    ]
+    assert all(not c.title.endswith("ago") for c in site.chapters)
+    assert len({c.num for c in site.chapters}) == len(site.chapters)
+
+
+def test_parse_toc_href_wins_over_contradictory_title_number(fixture_loader):
+    """El href /chapter-513 manda aunque el titulo diga 491."""
+    adapter = NovelfireAdapter()
+    html = fixture_loader("novelphoenix_toc_2026.html").replace(
+        '<span class="chapter-no">Ch. 513</span>',
+        '<span class="chapter-no">Ch. 999</span>',
+    )
+    site = adapter.parse_toc(html, base_url=f"{RANGE_BASE}/chapters")
+    assert site.chapters[-1].num == 513
+
+
+def test_parse_toc_current_markup_keeps_eight_and_eighty_eight_apart(fixture_loader):
+    adapter = NovelfireAdapter()
+    html = fixture_loader("novelphoenix_toc_2026.html")
+    site = adapter.parse_toc(html, base_url=f"{RANGE_BASE}/chapters")
+    nums = [c.num for c in site.chapters]
+    assert nums.count(8) == 1
+    assert nums.count(88) == 1
+
+
 def test_next_page_range_pager_disabled_is_last(fixture_loader):
     adapter = NovelfireAdapter()
     html = fixture_loader("novelfire_range_pager.html").replace(

@@ -35,6 +35,10 @@ Definido en `specs/02-models.md`. Reglas de reanudación:
    - `chapters_total == chapters_downloaded` → se salta la descarga.
    - `translated == True` y `chapters_translated == chapters_total` → se salta la traducción.
    - `epub_original` / `epub_translated` presentes y archivos existentes → se salta la generación de EPUB.
+
+   > **Nota (0.3.1)**: este spec es histórico. El código actual **no** usa estos contadores
+   > para saltar fases: la fuente de verdad es la existencia de archivos y `chapters_total`
+   > es el tamaño del TOC (no el descargado). Ver `docs/arquitectura.md` §5.1/§6.
 2. Si `force` → se borra el estado y se re-descarga (nunca borrar archivos en `raw/` re-utilizables: `force` re-descarga solo los que falten a menos que `--force` explícito re-escriba todo).
 
 > Nota de diseño: la fuente de verdad de "ya descargado" es la **existencia del archivo** en disco; el manifest es índice/caché de metadatos. Si un archivo falta pero el manifest dice que existe, se re-descarga ese capítulo.

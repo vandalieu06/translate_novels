@@ -7,6 +7,7 @@ import zipfile
 
 import pytest
 
+from novel_cli.core.models.novel import Chapter, NovelMetadata, SiteMetadata
 from novel_cli.core.models.state import Manifest
 from novel_cli.core.scraper.fetcher import Pacer
 from novel_cli.core.scraper.sites.generic import GenericAdapter
@@ -169,7 +170,7 @@ async def test_pipeline_default_batch_downloads_first_volume(tmp_path, fixture_l
     # solo el primer tomo se descarga
     assert fetcher.chapter_calls == 2
     assert manifest.chapters_downloaded == 2
-    assert manifest.chapters_total == 2
+    assert manifest.chapters_total == 4
     assert manifest.epub_original == ["The Eternal Journey 1-2.epub"]
     slug_dir = tmp_path / "the-eternal-journey"
     assert (slug_dir / "raw" / "0001.md").exists()
@@ -552,3 +553,78 @@ def test_rebuild_volumes_all_single_epub(tmp_path):
 def test_rebuild_volumes_requires_manifest(tmp_path):
     with pytest.raises(PipelineError):
         rebuild_volumes(tmp_path / "inexistente", 50)
+
+class _StaticAdapter:
+    """Adapter de test: devuelve siempre el mismo TOC, sin red."""
+
+    name = "static"
+
+    def __init__(self, chapters: list[Chapter], title: str = "The Eternal Journey"):
+        self.chapters = chapters
+        self.title = title
+
+    def tocs(self, novel_url: str) -> list[str]:
+        return [novel_url]
+
+    def parse_toc(self, html: str, base_url: str) -> SiteMetadata:
+        return SiteMetadata(
+            metadata=NovelMetadata(title=self.title, source_url=base_url),
+            chapters=[
+                Chapter(
+                    num=c.num,
+                    title=c.title,
+                    url=c.url or f"{base_url}/chapter-{index}",
+                )
+                for index, c in enumerate(self.chapters, start=1)
+            ],
+        )
+
+    def parse_chapter(self, html: str, chapter_url: str) -> list[str]:
+        return ["p1", "p2"]
+
+    def next_page(self, html: str, base_url: str) -> str | None:
+        return None
+
+
+@pytest.mark.asyncio
+async def test_pipeline_rejects_duplicate_chapter_nums(tmp_path):
+    """Un TOC con nums repetidos aborta antes de descargar o sobrescribir raw/."""
+    adapter = _StaticAdapter(
+        [
+            Chapter(num=88, title="Ch 8", url=""),
+            Chapter(num=88, title="Ch 88", url=""),
+        ]
+    )
+    fetcher = FakeFetcher("<html></html>")
+    kwargs = run_kwargs(tmp_path, fetcher, volume_size=2, download_all=True)
+    kwargs["adapter"] = adapter
+    with pytest.raises(PipelineError, match="duplicados"):
+        await run_pipeline(**kwargs)
+    assert fetcher.chapter_calls == 0
+    assert not (tmp_path / "the-eternal-journey" / "raw").exists()
+
+
+@pytest.mark.asyncio
+async def test_pipeline_513_chapters_generates_11_volumes(tmp_path):
+    adapter = _StaticAdapter(
+        [Chapter(num=i, title=f"Chapter {i}", url="") for i in range(1, 514)]
+    )
+    fetcher = FakeFetcher("<html></html>")
+    kwargs = run_kwargs(tmp_path, fetcher, volume_size=50, download_all=True)
+    kwargs["adapter"] = adapter
+    manifest = await run_pipeline(**kwargs)
+    assert manifest.chapters_total == 513
+    assert manifest.chapters_downloaded == 513
+    assert manifest.epub_original == [
+        "The Eternal Journey 1-50.epub",
+        "The Eternal Journey 51-100.epub",
+        "The Eternal Journey 101-150.epub",
+        "The Eternal Journey 151-200.epub",
+        "The Eternal Journey 201-250.epub",
+        "The Eternal Journey 251-300.epub",
+        "The Eternal Journey 301-350.epub",
+        "The Eternal Journey 351-400.epub",
+        "The Eternal Journey 401-450.epub",
+        "The Eternal Journey 451-500.epub",
+        "The Eternal Journey 501-513.epub",
+    ]

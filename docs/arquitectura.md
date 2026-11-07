@@ -123,13 +123,16 @@ Manifest(schema_version, slug, title, author, source_url, language_code,
          created_at, updated_at)
 ```
 
-`chapters_downloaded` solo cuenta capítulos **con contenido**; los capítulos cuyo
-parser devuelve 0 párrafos se consideran **vacíos**: se reintentan al final del
-lote de descarga (`download_chapters`, con backoff configurable `EMPTY_RETRIES`)
-y, si persisten, quedan en `chapters_empty` / `chapters_empty_nums` como
-"pendientes de reintento" (no fallan el job). Se reportan por `on_status`, en el
-CLI y en la UI web, y re-ejecutar el mismo comando los vuelve a descargar porque
-un archivo vacío no cuenta como "ya descargado".
+`chapters_total` es el tamaño del **TOC completo** (independiente del lote y de
+`volume_size`); `chapters_downloaded` solo cuenta capítulos **con contenido** en
+`raw/`. Por eso una novela descargada por tomos muestra `downloaded < total` hasta
+completarse. Los capítulos cuyo parser devuelve 0 párrafos se consideran
+**vacíos**: se reintentan al final del lote de descarga (`download_chapters`, con
+backoff configurable `EMPTY_RETRIES`) y, si persisten, quedan en
+`chapters_empty` / `chapters_empty_nums` como "pendientes de reintento" (no
+fallan el job). Se reportan por `on_status`, en el CLI y en la UI web, y
+re-ejecutar el mismo comando los vuelve a descargar porque un archivo vacío no
+cuenta como "ya descargado".
 
 API: `Manifest.load(slug_dir) -> Manifest | None` y `manifest.save(slug_dir)`.
 
@@ -215,14 +218,14 @@ sequenceDiagram
 
 Adaptadores (`sites/`):
 
-- `NovelfireAdapter` — selectores `{ .novel-title, .fixed-img .cover img, #chpagedlist .chapter-list li a, #chapter-container #content p }`; `tocs()` → página de portada + `/chapters`; `next_page()` lee `.page-link[rel="next"]`.
+- `NovelfireAdapter` — selectores `{ .novel-title, .fixed-img .cover img, #chpagedlist .chapter-list li a, .chapter-title, #chapter-container #content p }`; `tocs()` → página de portada + `/chapters`; `next_page()` lee `.page-link[rel="next"]` o `.chapter-range-pager` (novelphoenix). El **número** sale del `href` (`/chapter-<N>`) y el **título** de `.chapter-title` (sin badge `Ch. N` ni `<time>`); si no existe esa estructura cae a `anchor_title()`/regex (compatibilidad novel fire.net).
 - `GenericAdapter` — heurística TOC estilo Readest `chapterList.ts`: enlaces con texto numerado (`Chapter N`, `第N章`, `Capítulo N`) o href con digit runs; elige el contenedor más profundo con la mayoría de candidatos; metadatos de `og:title`/`og:image`/`meta[name=author]`; dedupe y orden por número.
 
 `services/toc.py` → `crawl_toc()` recorre las páginas de listado del adaptador y fusiona metadatos + capítulos, registrando la primera/última página (para el peek de la caché). `fetch_site_metadata()` se conserva como wrapper. El índice se **cachea** en `output/<slug>/.toc.json` (ver §5.12).
 
 ### 5.4 Descarga (`core/services/download.py`)
 
-- `download_chapters(...)` — pool async (`asyncio.Semaphore(concurrency)`) + `Pacer` compartido. Cada worker: `fetcher.fetch_html(url)` → `adapter.parse_chapter()` → escribe `raw/<NNNN>.md`. Respeta reanudación por **existencia de archivo**; con `force` re-descarga todo el lote.
+- `download_chapters(...)` — pool async (`asyncio.Semaphore(concurrency)`) + `Pacer` compartido. Cada worker: `fetcher.fetch_html(url)` → `adapter.parse_chapter()` → escribe `raw/<NNNN>.md` **en cuanto** termina (tmp + `replace` atómico), de modo que cancelar conserva lo ya bajado. `total_chapters` recibe el tamaño del TOC (no el del lote). Respeta reanudación por **existencia de archivo**; con `force` re-descarga todo el lote.
 - `is_chapter_empty(paragraphs)` — un capítulo es vacío si el parser devuelve 0 párrafos con contenido. Los vacíos **no** cuentan como descargados y se **reintentan al final del lote** (secuencial, con backoff `EMPTY_RETRY_BACKOFF`). Si persisten quedan en `manifest.chapters_empty(_nums)` y se reportan; re-ejecutar el comando los re-descarga porque un archivo vacío no cuenta como hecho.
 - `download_cover(...)` → `cover.<ext>` (jpg/png/webp...).
 - `load_chapter(path, num, url)` — reconstruye un `Chapter` desde `raw/` o `translated/` (formato: `# título` + párrafos separados por `\n\n`).
@@ -273,6 +276,7 @@ Concurrencia y protección (`core/config.py`): `translate_concurrency_default()`
 
 - **Descarga por tomos**: `_download_batch()` devuelve el primer tomo pendiente (primeros `volume_size` capítulos del TOC sin archivo en `raw/`) salvo `--all` o `volume_size=None`. Re-ejecutar avanza al siguiente tomo.
 - **EPUB incremental**: `_generate_epubs()` escribe solo los EPUB que falten (o todos con `--force`); al re-ejecutar añade `Novela 51-100.epub` sin reescribir `1-50`.
+- **Números únicos**: al resolver el TOC se validan los `num`; si dos capítulos comparten número, el job aborta **antes** de descargar (`PipelineError`) para no sobrescribir `raw/NNNN.md`. `_load_all_chapters()` deduplica por `num` como defensa extra y `generate_volumes`/`build_epub` rechazan listas con `num` repetidos (nunca se emite un EPUB con recursos duplicados).
 - `_load_all_chapters()` carga solo capítulos con archivo en disco → nunca genera EPUB vacíos de tomos no descargados.
 - **Notificaciones**: `run_pipeline(..., notifier=..., operation=...)` emite un `job_started` al inicio y luego `NotificationEvent`s estructurados en los hitos (`scrape_done`, `download_done`, `epub_original_done`, `translate_done`, `epub_translated_done`) con los contadores/idioma en `data`, y un `job_done`/`job_error` terminal con `operation` (descarga/sync/traducción/re-traducción). La emisión va envuelta para que un fallo del notifier nunca rompa el pipeline; `_phase_from_error()` clasifica la excepción (descarga/traducción/epub-manifest) para el aviso.
 
@@ -319,8 +323,8 @@ editable desde `../pdf-to-epub`):
 
 Capa de presentación web (FastAPI + Uvicorn) que reutiliza `core` tal cual. `web/` no contiene lógica de dominio:
 
-- `jobs.py` — **JobManager**: cada job lanza `run_pipeline` como `asyncio.create_task` dentro del event loop de Uvicorn (un job activo a la vez). Construye su propio fetcher/translator/notifier por ejecución y los cierra en `finally`. Los callbacks `on_status`/`on_progress` del pipeline publican **eventos** (`{type, phase, done, total, message}`) a un buffer + suscriptores.
-- `routes.py` — API REST: `GET /api/jobs` (lista de jobs con su `state`, para que la UI detecte un job activo), `POST /api/jobs` (valida como el CLI; acepta `target_language`), `GET /api/jobs/{id}`, `POST /api/jobs/{id}/cancel`, `GET /api/novels`, `GET /api/novels/{slug}` (incluye `translated_language`), `GET /api/novels/{slug}/epub/{file}`, `GET /api/novels/{slug}/cover`, `POST /api/novels/{slug}/sync` (hereda idioma y tamaño de tomo), `POST /api/novels/{slug}/retranslate` (solo-traducción de pendientes con opciones del manifest; acepta `{target_language}` y **fuerza la re-traducción** si el idioma cambia), `POST /api/novels/{slug}/volume-size` (cambia el tamaño de tomo y reconstruye los EPUBs desde el disco), `POST /api/novels/{slug}/rebuild` (reconstruye los EPUBs con el mismo `volume_size`, sin cambiar nada: aplica mejoras del builder como la página final), `GET /api/config` (incluye `translate_backend`, `translate_languages`, `default_translate_target` y `telegram_enabled`) y `POST /api/upload` (multipart: `file`, `source_language`, `translate`, `target_language`, `volume_size`, `title`, `author`, `kind`, `original_filename`).
+- `jobs.py` — **JobManager**: cada job lanza `run_pipeline` como `asyncio.create_task` dentro del event loop de Uvicorn. Hay un **lock por novela** (URL normalizada o slug): un segundo job para la misma novela se rechaza con `409` (`JobAlreadyRunning`), y el lock se libera al terminar (éxito, error o cancelación). Construye su propio fetcher/translator/notifier por ejecución y los cierra en `finally`. Los callbacks `on_status`/`on_progress` del pipeline publican **eventos** (`{type, phase, done, total, message}`) a un buffer + suscriptores. `cancel()` pasa el job a `cancelling` de inmediato y llama a `Task.cancel()`; `_run_web` lo deja en `cancelled` al confirmarse.
+- `routes.py` — API REST: `GET /api/jobs` (lista de jobs con su `state`, para que la UI detecte un job activo), `POST /api/jobs` (valida como el CLI; acepta `target_language`; `409` si ya hay un job para esa novela), `GET /api/jobs/{id}`, `POST /api/jobs/{id}/cancel` (devuelve `state: cancelling`), `GET /api/novels`, `GET /api/novels/{slug}` (incluye `translated_language`), `GET /api/novels/{slug}/epub/{file}`, `GET /api/novels/{slug}/cover`, `POST /api/novels/{slug}/sync` (hereda idioma y tamaño de tomo), `POST /api/novels/{slug}/retranslate` (solo-traducción de pendientes con opciones del manifest; acepta `{target_language}` y **fuerza la re-traducción** si el idioma cambia), `POST /api/novels/{slug}/volume-size` (cambia el tamaño de tomo y reconstruye los EPUBs desde el disco), `POST /api/novels/{slug}/rebuild` (reconstruye los EPUBs con el mismo `volume_size`, sin cambiar nada: aplica mejoras del builder como la página final), `GET /api/config` (incluye `translate_backend`, `translate_languages`, `default_translate_target` y `telegram_enabled`) y `POST /api/upload` (multipart: `file`, `source_language`, `translate`, `target_language`, `volume_size`, `title`, `author`, `kind`, `original_filename`).
 - `ws.py` — WebSocket `/api/jobs/{id}/ws`: reenvía los eventos del job al cliente (reusa el mismo mecanismo de callbacks que `rich`).
 - `app.py` — `create_app(output_dir)` monta static/templates y aplica auth opcional por token (`NOVEL_WEB_TOKEN`, cabecera `X-Auth-Token`). Sirve **4 páginas** (`GET /`, `/biblioteca`, `/ayuda` y `/novela/{slug}`). `main()` arranca Uvicorn (`--host`/`--port`/`--no-browser`).
 - `templates/` + `static/` — UI **multi-página** responsive sin build (design system propio en `static/css/` + JS vanilla por página): `index.html` (nueva descarga web/PDF + recientes), `library.html` (biblioteca con buscar/filtrar/ordenar), `novel.html` (ficha con acciones agrupadas y EPUBs) y `help.html` (guía agrupada). Los parciales del shell (`templates/partials/header|jobbar|footer.html`) los inyecta `app.py::_template` por placeholders `<!--partial:...-->` (sin Jinja). El JS se parte en módulos compartidos: `theme.js` (tema + iconos SVG), `common.js` (auth/api/toast/config + Ajustes + helpers) y `jobs.js` (job lock, **job bar global** con WebSocket + polling, envío de jobs, cancelar, sync/retraducción), más uno por página (`app.js`, `library.js`, `novel.js`). Las páginas leen los datos de la API existente; el slug de la ficha lo obtiene `novel.js` de la ruta.
@@ -347,7 +351,7 @@ Sobre puertos: la web escucha en **un único puerto** (default `8000`). El WebSo
 ### 5.12 Caché del TOC (`core/models/toc.py`)
 
 - **Problema**: `crawl_toc` recorre todo el listado paginado; en sitios grandes son ~54 peticiones por Sync aunque no haya novedades (riesgo de 429/bloqueo).
-- **`TocCache`** (`output/<slug>/.toc.json`): `version`, `source_url`, `fetched_at`, `listing_pages` (primera/última página con capítulos) y `chapters:[{num,title,url}]`.
+- **`TocCache`** (`output/<slug>/.toc.json`): `version` (`CURRENT_VERSION=2`), `source_url`, `fetched_at`, `listing_pages` (primera/última página con capítulos) y `chapters:[{num,title,url}]`. Al cambiar el parser de TOC se sube `CURRENT_VERSION`; `load()` descarta caches con versión anterior para forzar un crawl limpio (evita reutilizar índices con `num`/títulos corruptos).
 - **`_resolve_toc`** (en `pipeline.py`):
   1. Busca un manifest por `source_url` (variante no-lanzante).
   2. Con caché y `resume`/sin `force`/sin `refresh_toc`:
@@ -374,7 +378,7 @@ Reglas:
 - `--resume` (default): se saltan fases completas y no se reescriben EPUB existentes.
 - `--force`: re-descarga y re-traduce todo.
 - `--no-resume`: no consulta el manifest, pero la existencia de archivos sigue evitando re-descargas.
-- Tras cada fase se escribe el manifest (`chapters_total`/`chapters_downloaded`/`chapters_translated` consistentes).
+- Tras cada fase se escribe el manifest (`chapters_total` = tamaño del TOC; `chapters_downloaded`/`chapters_translated` = archivos con contenido).
 
 Ciclo de vida de un capítulo (la existencia de archivo en disco manda; el manifest es caché):
 

@@ -8,7 +8,12 @@
 async function hasActiveJob() {
   try {
     const jobs = await api("/api/jobs");
-    return jobs.some((j) => j.state === "pending" || j.state === "running");
+    return jobs.some(
+      (j) =>
+        j.state === "pending" ||
+        j.state === "running" ||
+        j.state === "cancelling",
+    );
   } catch (_) {
     return false;
   }
@@ -216,7 +221,12 @@ async function initJobBar() {
   }
   try {
     const jobs = await api("/api/jobs");
-    const active = jobs.find((j) => j.state === "pending" || j.state === "running");
+    const active = jobs.find(
+      (j) =>
+        j.state === "pending" ||
+        j.state === "running" ||
+        j.state === "cancelling",
+    );
     if (active) attachJob(active.id, active.url || "Job en curso");
   } catch (_) {}
 }

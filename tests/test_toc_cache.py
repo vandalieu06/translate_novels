@@ -100,6 +100,21 @@ def test_toc_cache_load_missing_and_invalid(tmp_path):
     assert TocCache.load(tmp_path) is None
 
 
+def test_toc_cache_discards_old_version(tmp_path):
+    cache = TocCache(
+        source_url=URL,
+        fetched_at=datetime.now(UTC).isoformat(),
+        listing_pages=[LISTING],
+        chapters=[CachedChapter(num=1, title="Ch 1", url="u1")],
+    )
+    cache.save(tmp_path)
+    data = (tmp_path / ".toc.json").read_text(encoding="utf-8")
+    (tmp_path / ".toc.json").write_text(
+        data.replace('"version": 2', '"version": 1'), encoding="utf-8"
+    )
+    assert TocCache.load(tmp_path) is None
+
+
 def test_make_cache_and_site_from_cache():
     manifest = Manifest(
         slug="novela", title="Novela", author="A", source_url=URL, cover_path="c.jpg"

@@ -18,10 +18,22 @@ def stable_identifier(source_url: str) -> str:
     return f"urn:novel-cli:{digest}"
 
 
+def _ensure_unique_nums(chapters: list[Chapter]) -> None:
+    """Evita recursos EPUB duplicados por numeros de capitulo repetidos."""
+    seen: set[int] = set()
+    for chapter in chapters:
+        if chapter.num in seen:
+            raise ValueError(
+                f"numero de capitulo duplicado: {chapter.num} ({chapter.url})"
+            )
+        seen.add(chapter.num)
+
+
 def generate_volumes(
     chapters: list[Chapter], volume_size: int | None
 ) -> list[Volume]:
     """Divide capitulos ordenados en volumenes (o un solo EPUB)."""
+    _ensure_unique_nums(chapters)
     if not chapters:
         return []
     if volume_size is None:
@@ -57,6 +69,7 @@ def build_epub(
     include_end_page: bool = True,
 ) -> bytes:
     """Construye un EPUB a partir de capitulos (originales o ya traducidos)."""
+    _ensure_unique_nums(chapters)
     book = epub.EpubBook()
     book.set_identifier(identifier)
     book.set_title(title)

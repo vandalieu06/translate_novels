@@ -108,6 +108,69 @@ def test_create_job_runs_to_done(monkeypatch, tmp_path):
     assert data["result"]["slug"] == "novela"
 
 
+def test_create_job_duplicate_url_returns_409(monkeypatch, tmp_path):
+    async def slow(**kwargs: Any) -> Manifest:
+        await asyncio.sleep(0.2)
+        return Manifest(slug="novela", title="Novela")
+
+    monkeypatch.setattr("novel_cli.web.jobs.run_pipeline", slow)
+    with TestClient(create_app(output_dir=tmp_path)) as client:
+        first = client.post("/api/jobs", json={"url": "https://example.com/novel"})
+        assert first.status_code == 200
+        job_id = first.json()["job_id"]
+
+        second = client.post("/api/jobs", json={"url": "https://example.com/novel/"})
+        assert second.status_code == 409
+        assert second.json()["detail"]["job_id"] == job_id
+
+        async def wait_done():
+            data = client.get(f"/api/jobs/{job_id}").json()
+            for _ in range(100):
+                data = client.get(f"/api/jobs/{job_id}").json()
+                if data["state"] in ("done", "error"):
+                    return data
+                await asyncio.sleep(0.01)
+            return data
+
+        asyncio.run(wait_done())
+        third = client.post("/api/jobs", json={"url": "https://example.com/novel"})
+        assert third.status_code == 200
+
+
+def test_cancel_job_marks_cancelled(monkeypatch, tmp_path):
+    async def slow(**kwargs: Any) -> Manifest:
+        await asyncio.sleep(5)
+        return Manifest(slug="novela", title="Novela")
+
+    monkeypatch.setattr("novel_cli.web.jobs.run_pipeline", slow)
+    with TestClient(create_app(output_dir=tmp_path)) as client:
+        job_id = client.post(
+            "/api/jobs", json={"url": "https://example.com/novel"}
+        ).json()["job_id"]
+
+        async def wait_state(states: tuple[str, ...]):
+            data = client.get(f"/api/jobs/{job_id}").json()
+            for _ in range(100):
+                data = client.get(f"/api/jobs/{job_id}").json()
+                if data["state"] in states:
+                    return data
+                await asyncio.sleep(0.01)
+            return data
+
+        asyncio.run(wait_state(("running",)))
+        res = client.post(f"/api/jobs/{job_id}/cancel")
+        assert res.status_code == 200
+        assert res.json()["cancelled"] is True
+        assert res.json()["state"] in ("cancelling", "cancelled")
+        data = asyncio.run(wait_state(("cancelled", "error")))
+        assert data["state"] == "cancelled"
+
+
+def test_cancel_unknown_job_404(monkeypatch, tmp_path):
+    client = _client(monkeypatch, tmp_path)
+    assert client.post("/api/jobs/inexistente/cancel").status_code == 404
+
+
 def test_list_jobs_empty(monkeypatch, tmp_path):
     client = _client(monkeypatch, tmp_path)
     assert client.get("/api/jobs").json() == []

@@ -7,7 +7,12 @@ from urllib.parse import urljoin
 from lxml import html as lh
 
 from novel_cli.core.models.novel import Chapter, NovelMetadata, SiteMetadata
-from novel_cli.core.utils.text import anchor_title, clean_text, guess_chapter_num
+from novel_cli.core.utils.text import (
+    anchor_title,
+    chapter_num_from_href,
+    clean_text,
+    guess_chapter_num,
+)
 
 SEL_TITLE = ".novel-title"
 SEL_COVER = ".fixed-img .cover img"
@@ -38,11 +43,13 @@ class NovelfireAdapter:
             href = anchor.get("href")
             if not href:
                 continue
-            text = anchor_title(anchor)
+            text = _chapter_title(anchor)
             if not text:
                 continue
             url = urljoin(base_url, href)
-            num = guess_chapter_num(text, href, fallback)
+            num = chapter_num_from_href(href)
+            if num is None:
+                num = guess_chapter_num(text, href, fallback)
             chapters.append(Chapter(num=num, title=text, url=url))
             fallback += 1
         return SiteMetadata(
@@ -100,6 +107,14 @@ class NovelfireAdapter:
             if href:
                 return urljoin(base_url, href)
         return None
+
+
+def _chapter_title(anchor) -> str:
+    """Titulo del item sin el badge ``Ch. N`` ni la fecha relativa (``<time>``)."""
+    nodes = anchor.cssselect(SEL_CHAPTER_TITLE)
+    if nodes:
+        return clean_text(nodes[0].text_content())
+    return anchor_title(anchor)
 
 
 def _first_text(root, selector: str) -> str | None:
